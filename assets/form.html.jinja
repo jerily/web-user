@@ -15,7 +15,7 @@
 <label>Email <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
 {% endif %}
 {% if view == "register" or view == "reset" %}
-<label>New password <input name="password" type="password" autocomplete="new-password" minlength="15" required></label><p>Use at least 15 characters.</p>
+<label>New password <input name="password" type="password" autocomplete="new-password" minlength="15" required></label><p>Use at least 15 characters and at most 72 UTF-8 bytes.</p>
 {% endif %}
 {% if view == "login" or view == "two-factor/disable" %}
 <label>Password <input name="password" type="password" autocomplete="current-password" required></label>

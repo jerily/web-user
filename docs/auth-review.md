@@ -17,7 +17,7 @@ Findings addressed in the new package:
 
 | Observation in reviewed code | New package behavior |
 | --- | --- |
-| `set_password_fields` trims password text (around line 397); recovery also trims it (1216). | Preserve UTF-8 password bytes exactly, enforce explicit length bounds, use native scrypt. |
+| `set_password_fields` trims password text (around line 397); recovery also trims it (1216). | Preserve UTF-8 password bytes exactly, enforce explicit length bounds, use bcrypt-tcl with explicit 72-byte validation. |
 | `confirm_two_factor_setup` accepts a matching submitted `rendered_demo_code` under `demo_expose_codes` (1091–1096), even if normal OTP verification fails. | LOCAL only changes display; it never changes acceptance rules. |
 | Verification (roughly 790–880), MFA completion (925–984), and recovery (1212–1266) perform separate reads, writes and deletes. Concurrent consumers are not made atomic by these functions. | Transactional consumption, checked delete counts, unique email constraint, and user revision CAS. |
 | `verify_totp_code` checks the current/adjacent time windows without a persisted used-step counter; `verify_two_factor` consumes only the pending session. | Persist last accepted OTP step per user; reject reuse even through another challenge. |
@@ -35,9 +35,11 @@ for the QR image. It does not reuse the example's static secret.
 
 References for the implementation decisions:
 [Google Authenticator Key URI Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format)
-and [OWASP password storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#scrypt).
-Tink has no password KDF; the new native password/random/comparison helpers in
-`tink-tcl` explicitly use OpenSSL 3. AEAD and keyed digests remain Tink primitives.
+and [OWASP password storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#bcrypt).
+Password hashing uses `bcrypt-tcl`; random credentials use the existing
+`twebserver::random_bytes` command. Tink supplies AEAD and MAC verification through
+its unmodified API. Public dependency code and documentation contain no references
+to these private integrations.
 
 Intentional boundaries: no OAuth, phone registration, magic-link login, marketplace
 record migration, email sender, or MFA backup-code recovery system. The example

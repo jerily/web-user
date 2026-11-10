@@ -34,12 +34,29 @@ foreach kind {wiki blog} {
     ::web::${kind}::mount $router -store [dict get $contentStores $kind] \
         -prefix /$kind -authorize [list ::web::user::authorize $accounts] \
         -csrf [list ::web::user::csrf $accounts] \
+        -context [list ::site_properties $accounts] \
         -config [dict create allow_create true \
             master_template [dict get $site master_template]]
 }
 ```
 
-No changes to `web-wiki` or `web-blog` are required. Their store still uses
+The content packages' generic `-context` callback receives `request context`
+and returns typed Jinja properties. For example:
+
+```tcl
+proc site_properties {accounts request context} {
+    set user [::web::user::current_user $accounts $request $context]
+    dict create show_edit_controls [list BOOL [expr {$user ne {}}]] \
+        signed_in [list BOOL [expr {$user ne {}}]]
+}
+```
+
+Values are evaluated once per request and override the template context for that
+request only. Hosts may provide any trusted typed properties, not just editing
+visibility. `show_edit_controls` defaults to true when no callback is supplied.
+This controls presentation; `-authorize` and `-csrf` still protect editor routes.
+
+The content store uses
 `-domain`; use the same site identity as the account store's `-tenant` to keep
 content partitioning aligned. Site-to-tenant mapping is trusted configuration,
 never a request parameter. Use separate keys/tenants for unrelated sites.
@@ -92,3 +109,14 @@ Expected request errors return plain text and HTTP status. Unexpected failures
 propagate to the host, which should return a generic 500 without logging request
 credentials or sensitive database parameters. See `example-community` for a
 complete adapter, persistent LOCAL keys, shared master, and all four mounts.
+
+## Cookie ownership
+
+Each account mount configures `tsession::cookie` with its own cookie name and
+borrowed Tink MAC handle. `tsession` signs, verifies, reads and sets the cookie;
+`web-user` owns database session expiry, rotation and revocation. PROD passes
+`-secure true`, LOCAL passes `-secure false`. HttpOnly, SameSite=Lax and Path=/
+apply in both environments; PROD also uses a `__Host-` cookie name. A host must
+keep the keyset handle alive for the mount's lifetime. No global tsession store
+or middleware initialization is used, so separate mounts cannot overwrite each
+other's cookie configuration.

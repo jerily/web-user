@@ -2,13 +2,13 @@
 
 Email/password accounts mounted on a `tpathexp` site router. OAuth is outside this
 package. Uses `tpersist`/TDBC, `tink-tcl`, `tmfa`, `tqrcodegen`, `ksuid-tcl`,
-`jinja2-tcl`, and `tjson`. The package owns its routes, templates, account records,
+`jinja2-tcl`, `tjson`, `bcrypt-tcl`, and `twebserver`. The package owns its routes, templates, account records,
 sessions and CSRF; the host owns configuration, connections, crypto keysets and
 HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contract
 and [docs/auth-review.md](docs/auth-review.md) for the marketplace review.
 
 ```tcl
-package require web-user 0.1.0
+package require web-user 0.1.1
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
@@ -32,7 +32,7 @@ backend policy. Schema changes never happen in `mount` or request handlers.
 
 ## Flows
 
-- Register with email and a password of at least 15 characters (up to 1024 UTF-8
+- Register with email and a password of at least 15 characters (up to 72 UTF-8
   bytes), then verify the email code before logging in. Email normalization trims
   and lowercases; passwords are preserved exactly. Register again to replace a
   lost/expired verification code and pending password. Verified accounts cannot
@@ -64,10 +64,12 @@ setup secrets necessarily appear during enrollment in both environments.
 ## Security and operations
 
 User IDs are KSUIDs. Session/recovery codes use 32 random bytes from OpenSSL via
-`tink-tcl`, and are stored only as Tink MAC digests bound to tenant and purpose.
+`twebserver::random_bytes`, and are stored only as Tink MAC digests bound to tenant and purpose.
 Email is encrypted with Tink AEAD and looked up by a keyed digest. MFA secrets
-are AEAD-encrypted with tenant/user-associated data. Scrypt stores salted password
-hashes; native helpers use N=131072, r=8, p=1. No custom Tcl KDF is implemented.
+are AEAD-encrypted with tenant/user-associated data. Passwords use `bcrypt-tcl` at cost 12 with random salts. Inputs above 72 UTF-8
+bytes or containing NUL characters are rejected rather than truncated. Native
+MAC verification checks session, recovery, CSRF and TOTP codes; `tink-tcl` is
+used without modifications.
 
 All state-changing forms require session-bound CSRF. Cookies are host-only,
 HttpOnly, SameSite=Lax and Path=/, and also Secure with a `__Host-` name in PROD.
@@ -98,10 +100,18 @@ Install via the private registry and public dependency fallback:
 ttrek install -y -registry /path/to/private-ttrek-registry -add-pubreg web-user
 ```
 
-The private registry includes patched `tink-tcl` 20240704.0.3 and `tmfa` 1.1.2
-recipes, built from their previous public tags plus registry-held patches; no
-unpublished public tag is required. They mirror the corresponding source checkout
-changes. Apply new dependency releases as explicit upgrades.
+The integration uses unmodified `tink-tcl` 20240704.0.2, `bcrypt-tcl` 2.0.1,
+`tmfa` 1.1.2, `tsession` 1.0.4, and `twebserver` for cryptographic random bytes.
+Public dependency releases/recipes must be published before installing 0.1.1
+from the registry; local source checkouts can be used during development.
+The 0.1.0 recipes remain historical and depend on a withdrawn support build.
+
+Existing 0.1.0 scrypt password records cannot be converted without a password.
+Users must complete password recovery to replace them with bcrypt records.
+Encrypted data remains valid; no schema or key changes are needed. The new cookie
+format requires existing browsers to sign in again.
+Unsupported password hashes fail login with the ordinary invalid-credentials
+response, while recovery remains available. No scrypt implementation is retained.
 
 With dependencies on `TCLLIBPATH`:
 
@@ -115,3 +125,13 @@ WEB_USER_TEST_PG='-host 127.0.0.1 -port 55439 -database postgres -user test' \
 Tests exercise registration, recovery, session isolation/revocation, native crypto,
 MFA/replay, persistent limits, configuration, and LOCAL/PROD output. PostgreSQL
 runs use unique tenant namespaces; never point tests at a production database.
+
+### Session cookies
+
+`tsession` signs, reads and sets each mount's cookie using its own configuration
+and the store's Tink MAC handle. Session records, absolute expiry and revocation
+remain in `tpersist`; no in-memory session middleware is initialized. Cookies
+are HttpOnly, SameSite=Lax, Path=/, and Secure with a `__Host-` name in PROD.
+The signed-cookie format replaces the earlier raw cookie, so existing browsers
+must sign in again after upgrading. Passwords stored by the old scrypt build
+must be reset; password reset is available without signing in.

@@ -16,6 +16,8 @@ proc ::web::user::mount {router args} {
     set name web_user_[string range [tag $store $prefix cookie] end-23 end]
     if {[dict get $store -env] eq "PROD"} {set name __Host-$name}
     dict set c -cookie $name
+    dict set c -session-cookie [::tsession::cookie::create -name $name -mac [dict get $store -mac] \
+        -secure [expr {[dict get $store -env] eq "PROD"}]]
     set templates {}
     foreach filename {page.html.jinja form.html.jinja} {dict set templates $filename [read_text [file join $root assets $filename]]}
     set templates [dict merge $templates [dict get $settings templates]]
