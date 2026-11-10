@@ -8,14 +8,14 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.1.5
+package require web-user 0.1.6
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
     postgresql [dict create -host db -database community -user community]]]
 ::web::user::initdb $connection ;# explicit maintenance; before workers start
 set store [::web::user::create -connection $connection -config [dict create tenant example \
-    aead $aeadHandle mac $macHandle]]
+    aead $aeadHandle mac $macHandle email_hash_salt $emailHashSalt]]
 set router [::tpathexp::router]
 set accounts [::web::user::mount $router -store $store -config [dict create prefix /user origin https://community.example issuer Community \
         title Account master_template $siteMaster]]
@@ -24,6 +24,9 @@ set accounts [::web::user::mount $router -store $store -config [dict create pref
 `aeadHandle` is a registered Tink AES256_GCM keyset; `macHandle` is a registered
 HMAC_SHA256 keyset. Store keyset JSON securely outside the database/repository and
 reuse it across workers and restarts. Each worker registers its own handles.
+`emailHashSalt` is the required `email_hash_salt` config property. Generate it once
+per site (for example, `openssl rand -hex 32`), keep it in private configuration,
+and reuse it across workers and restarts. There is no default salt.
 `connect` uses SQLite only for LOCAL and PostgreSQL only for PROD; no fallback.
 The host must supply an autocommit connection (`-autobegin 0`) when using `create`
 directly. A host borrowing a connection is responsible for selecting the same
@@ -39,9 +42,6 @@ the default is false. Existing members can add names through `/user/profile`.
 Names are encrypted at rest. The reusable profile widget exposes the first name
 as `display_name`, with `Member` as the fallback. See [WIDGETS.md](WIDGETS.md) for
 the callback API and host wiring.
-
-Run `initdb` when upgrading to add `web_user_profiles`; existing account records
-are preserved. The community site's LOCAL initialization does this automatically.
 
 ## Flows
 
@@ -84,7 +84,12 @@ User IDs are KSUIDs. Email confirmation and password-reset codes are six uniform
 random digits, including leading zeros. Session tokens use 32 random bytes. Both use
 OpenSSL through `twebserver::random_bytes` and are stored only as Tink MAC digests
 bound to tenant and purpose.
-Email is encrypted with Tink AEAD and looked up by a keyed digest. MFA secrets
+Email and first/last names are encrypted with Tink AEAD, bound to the tenant,
+user and field. Registration, login and recovery look up the normalized email
+using the unique `(tenant, email_key)` index. `email_key` is a Tink MAC over the
+configured `email_hash_salt` and normalized address, also bound to tenant and
+purpose. `::web::user::user_by_email $store $address` uses the same lookup and
+returns the stored record (its email remains encrypted). MFA secrets
 are AEAD-encrypted with tenant/user-associated data. Passwords use `bcrypt-tcl` at cost 12 with random salts. Inputs above 72 UTF-8
 bytes or containing NUL characters are rejected rather than truncated. Native
 MAC verification checks session, recovery, CSRF and TOTP codes; `tink-tcl` is
@@ -131,12 +136,10 @@ The package uses unmodified `tink-tcl` 20240704.0.2, `bcrypt-tcl` 2.0.1,
 `tmfa` 1.1.2, `tsession` 1.0.4, and `twebserver` for cryptographic random bytes.
 Keep persistent keysets and databases outside the source and install directories.
 
-Existing 0.1.0 scrypt password records cannot be converted without a password.
-Users must complete password recovery to replace them with bcrypt records.
-Encrypted data remains valid; no schema or key changes are needed. The new cookie
-format requires existing browsers to sign in again.
-Unsupported password hashes fail login with the ordinary invalid-credentials
-response, while recovery remains available. No scrypt implementation is retained.
+Only the current storage and configuration format is supported. Unsalted email
+indexes are incompatible; no fallback lookup or migration is included. Provision
+a fresh account database for this release. Changing `email_hash_salt` or the MAC
+key later invalidates email lookups. Preserve both with the encryption keysets.
 
 With dependencies on `TCLLIBPATH`:
 
@@ -157,8 +160,5 @@ runs use unique tenant namespaces; never point tests at a production database.
 and the store's Tink MAC handle. Session records, absolute expiry and revocation
 remain in `tpersist`; no in-memory session middleware is initialized. Cookies
 are HttpOnly, SameSite=Lax, Path=/, and Secure with a `__Host-` name in PROD.
-The signed-cookie format replaces the earlier raw cookie, so existing browsers
-must sign in again after upgrading. Passwords stored by the old scrypt build
-must be reset; password reset is available without signing in.
 
 Request schemas use `topenapi` 0.2.0; see `assets/operations.json` and the mounting guide.

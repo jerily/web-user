@@ -2,7 +2,7 @@
 # the host as registered Tink handles; none are compiled into package defaults.
 proc ::web::user::settings {config} {
     set config [options {
-        tenant {} aead {} mac {}
+        tenant {} aead {} mac {} email_hash_salt {}
         bcrypt_cost 12 password_min_length 15 collect_names false
         totp_digits 6 totp_period 30 totp_algorithm SHA1 totp_window 1
         session_ttl 43200 code_ttl 900 challenge_ttl 600

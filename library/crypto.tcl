@@ -25,6 +25,11 @@ proc ::web::user::email {value} {
     }
     return $value
 }
+# The persistent site salt and normalized address form one unambiguous MAC input.
+# Tenant and purpose binding come from tag; the MAC key remains host-owned.
+proc ::web::user::email_key {store value} {
+    tag $store [list [property $store email_hash_salt] [email $value]] email
+}
 # Passwords remain text until bcrypt-tcl converts them to standard UTF-8.
 proc ::web::user::password_hash {value {config {}}} {
     set config [settings $config]
@@ -39,7 +44,7 @@ proc ::web::user::password_ok {user value} {
     set bytes [encoding convertto utf-8 $value]
     if {[string length $bytes] < 1 || [string length $bytes] > 72 || [string first \x00 $value] >= 0} {return 0}
     set hash [dict get $user password]
-    # Fail closed for obsolete/unsupported hashes and unreasonable stored costs.
+    # Fail closed for unsupported hashes and unreasonable stored costs.
     if {![regexp {^\$2[aby]\$(0[4-9]|1[0-6])\$[./A-Za-z0-9]{53}$} $hash]} {return 0}
     ::bcrypt::checkpw $value $hash
 }

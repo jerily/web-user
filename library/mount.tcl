@@ -1,9 +1,8 @@
 proc ::web::user::mount {router args} {
     variable root
-    set config [options {-store {} -prefix {} -config {} -deliver {}} {*}$args]
+    set config [options {-store {} -config {}} {*}$args]
     set settings [options {prefix /user deliver {} master_template {} templates {} title Account issuer {} origin {} properties {}} {*}[dict get $config -config]]
     foreach key {prefix deliver} {
-        if {[dict get $config -$key] ne {}} {dict set settings $key [dict get $config -$key]}
         dict set config -$key [dict get $settings $key]
     }
     set store [dict get $config -store]
