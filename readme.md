@@ -146,3 +146,5 @@ are HttpOnly, SameSite=Lax, Path=/, and Secure with a `__Host-` name in PROD.
 The signed-cookie format replaces the earlier raw cookie, so existing browsers
 must sign in again after upgrading. Passwords stored by the old scrypt build
 must be reset; password reset is available without signing in.
+
+Request schemas use `topenapi` 0.2.0; see `assets/operations.json` and the mounting guide.

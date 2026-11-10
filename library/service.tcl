@@ -1,7 +1,6 @@
 # Each action runs inside the shared request transaction. Delivery follows commit.
 proc ::web::user::action_register {config row fields} {
     set store [dict get $config -store]
-    set uid [dict get $row uid]
     set result [dict create message {} debug_code {} delivery {}]
     set address [email [dict get $fields email]]
     set hash [password_hash [dict get $fields password] [dict get $store -config]]
@@ -47,7 +46,6 @@ proc ::web::user::action_verify {config row fields} {
 
 proc ::web::user::action_login {config row fields} {
     set store [dict get $config -store]
-    set uid [dict get $row uid]
     set result [dict create message {} debug_code {} delivery {}]
     set address [email [dict get $fields email]]
     set user [one $store web_user_users [dict create email_key [tag $store $address email]]]
@@ -66,7 +64,6 @@ proc ::web::user::action_login {config row fields} {
 
 proc ::web::user::action_forgot {config row fields} {
     set store [dict get $config -store]
-    set uid [dict get $row uid]
     set result [dict create message {} debug_code {} delivery {}]
     set address [email [dict get $fields email]]
     set user [one $store web_user_users [dict create email_key [tag $store $address email]]]
@@ -161,7 +158,6 @@ proc ::web::user::action_two_factor_disable {config row fields} {
 
 proc ::web::user::action_logout {config row fields} {
     set store [dict get $config -store]
-    set uid [dict get $row uid]
     set result [dict create message {} debug_code {} delivery {}]
     dict set result token [rotate $store $row anon]
     dict set result view login

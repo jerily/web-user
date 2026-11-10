@@ -16,7 +16,8 @@
     "tdbcpostgres": ">=1.1.8",
     "bcrypt-tcl": "2.0.1",
     "twebserver": "^1.47.56",
-    "tsession": "1.0.4"
+    "tsession": "1.0.4",
+    "topenapi": "^0.2.0"
   },
   "devDependencies": {}
 }

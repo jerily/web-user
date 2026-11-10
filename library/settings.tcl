@@ -1,7 +1,7 @@
 # Site policy is immutable for the lifetime of a store. Secrets are supplied by
 # the host as registered Tink handles; none are compiled into package defaults.
 proc ::web::user::settings {config} {
-    set c [options {
+    set config [options {
         tenant {} aead {} mac {}
         bcrypt_cost 12 password_min_length 15
         totp_digits 6 totp_period 30 totp_algorithm SHA1 totp_window 1
@@ -16,15 +16,15 @@ proc ::web::user::settings {config} {
         throttle_window 1 86400 browse_limit 1 100000 post_limit 1 100000
         account_limit 1 100000 challenge_limit 1 100 form_max_bytes 1024 1048576
     } {
-        set value [dict get $c $key]
+        set value [dict get $config $key]
         if {![string is integer -strict $value] || $value < $minimum || $value > $maximum} {
             error "$key must be $minimum..$maximum"
         }
     }
-    if {[dict get $c totp_digits] ni {6 8}} {error "totp_digits must be 6 or 8"}
-    dict set c totp_algorithm [string toupper [dict get $c totp_algorithm]]
-    if {[dict get $c totp_algorithm] ni {SHA1 SHA256 SHA512}} {error "unsupported totp_algorithm"}
-    return $c
+    if {[dict get $config totp_digits] ni {6 8}} {error "totp_digits must be 6 or 8"}
+    dict set config totp_algorithm [string toupper [dict get $config totp_algorithm]]
+    if {[dict get $config totp_algorithm] ni {SHA1 SHA256 SHA512}} {error "unsupported totp_algorithm"}
+    return $config
 }
 proc ::web::user::property {store name} {dict get $store -config $name}
 

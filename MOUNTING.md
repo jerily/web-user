@@ -183,3 +183,12 @@ apply in both environments; PROD also uses a `__Host-` cookie name. A host must
 keep the keyset handle alive for the mount's lifetime. No global tsession store
 or middleware initialization is used, so separate mounts cannot overwrite each
 other's cookie configuration.
+
+## Request validation
+
+`assets/operations.json` contains inline OpenAPI operations for each POST form.
+Mounting applies configured limits and captures the resulting JSON. `topenapi`
+0.2.0 validates required fields, types, lengths and allowed operations after
+strict form decoding and CSRF verification. Unknown form fields are rejected.
+Authorization, password checks, MFA replay and transactions remain in the handlers.
+No credential-bearing validation diagnostics are returned to the browser.

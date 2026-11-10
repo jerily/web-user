@@ -36,13 +36,13 @@ proc ::web::user::decode {value} {
     set value [string map {+ { }} $value]
     set bytes {}
     for {set i 0} {$i < [string length $value]} {incr i} {
-        set c [string index $value $i]
-        if {$c eq "%"} {
+        set character [string index $value $i]
+        if {$character eq "%"} {
             set hex [string range $value [expr {$i+1}] [expr {$i+2}]]
             if {![regexp {^[a-fA-F0-9]{2}$} $hex]} {fail 400 "Invalid percent encoding."}
             append bytes [binary format H2 $hex]
             incr i 2
-        } else {append bytes [encoding convertto utf-8 $c]}
+        } else {append bytes [encoding convertto utf-8 $character]}
     }
     if {[catch {encoding convertfrom utf-8 $bytes} text] || [encoding convertto utf-8 $text] ne $bytes || [string first \x00 $text] >= 0} {
         fail 400 "Invalid UTF-8 form."
@@ -117,7 +117,7 @@ proc ::web::user::render {config view token {extra {}}} {
         [::tjson::typed_to_json [list M $context]] -templates $templates -path form.html.jinja]
 }
 # Shared request guard; concrete endpoints supply their own action procedure.
-proc ::web::user::handle {config view handler required challenge request context} {
+proc ::web::user::handle {config view handler challenge request context} {
     try {
         set store [dict get $config -store]
         set token [cookie_token $config $request]
@@ -132,13 +132,7 @@ proc ::web::user::handle {config view handler required challenge request context
         }
         set fields [form $request [property $store form_max_bytes]]
         if {$row eq {} || ![dict exists $fields csrf] || ![csrf $config verify $request $context [dict get $fields csrf]]} {fail 403 "Invalid CSRF token. Reload the form."}
-        foreach key $required {
-            if {![dict exists $fields $key]} {fail 400 "Missing form field: $key"}
-        }
-        if {$view eq "two-factor/setup"} {
-            set key [expr {[dict get $fields operation] eq "begin" ? "password" : "code"}]
-            if {![dict exists $fields $key]} {fail 400 "Missing form field: $key"}
-        }
+        validate_form $request $fields [dict get $config -operations $view]
         throttle $store [list post [peer $context]] [property $store post_limit]
         if {[dict exists $fields email]} {throttle $store [list $view [email [dict get $fields email]]] [property $store account_limit]}
         if {[dict get $row uid] ne {}} {throttle $store [list $view [dict get $row uid]] [property $store account_limit]}
@@ -166,41 +160,41 @@ proc ::web::user::peer {context} {
 }
 
 proc ::web::user::account {config request context params} {
-    handle $config account {} {} 0 $request $context
+    handle $config account {} 0 $request $context
 }
 
 proc ::web::user::register {config request context params} {
-    handle $config register ::web::user::action_register {email password} 0 $request $context
+    handle $config register ::web::user::action_register 0 $request $context
 }
 
 proc ::web::user::verify {config request context params} {
-    handle $config verify ::web::user::action_verify code 1 $request $context
+    handle $config verify ::web::user::action_verify 1 $request $context
 }
 
 proc ::web::user::login {config request context params} {
-    handle $config login ::web::user::action_login {email password} 0 $request $context
+    handle $config login ::web::user::action_login 0 $request $context
 }
 
 proc ::web::user::forgot {config request context params} {
-    handle $config forgot ::web::user::action_forgot email 0 $request $context
+    handle $config forgot ::web::user::action_forgot 0 $request $context
 }
 
 proc ::web::user::reset {config request context params} {
-    handle $config reset ::web::user::action_reset {code password} 1 $request $context
+    handle $config reset ::web::user::action_reset 1 $request $context
 }
 
 proc ::web::user::two_factor {config request context params} {
-    handle $config two-factor ::web::user::action_two_factor code 1 $request $context
+    handle $config two-factor ::web::user::action_two_factor 1 $request $context
 }
 
 proc ::web::user::two_factor_setup {config request context params} {
-    handle $config two-factor/setup ::web::user::action_two_factor_setup operation 0 $request $context
+    handle $config two-factor/setup ::web::user::action_two_factor_setup 0 $request $context
 }
 
 proc ::web::user::two_factor_disable {config request context params} {
-    handle $config two-factor/disable ::web::user::action_two_factor_disable {password code} 0 $request $context
+    handle $config two-factor/disable ::web::user::action_two_factor_disable 0 $request $context
 }
 
 proc ::web::user::logout {config request context params} {
-    handle $config logout ::web::user::action_logout {} 0 $request $context
+    handle $config logout ::web::user::action_logout 0 $request $context
 }

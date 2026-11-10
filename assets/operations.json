@@ -1,0 +1,315 @@
+{
+  "register": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "email": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 254
+              },
+              "password": {
+                "type": "string",
+                "minLength": 15,
+                "maxLength": 72
+              }
+            },
+            "required": [
+              "csrf",
+              "email",
+              "password"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "verify": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "csrf",
+              "code"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "login": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "email": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 254
+              },
+              "password": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 72
+              }
+            },
+            "required": [
+              "csrf",
+              "email",
+              "password"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "forgot": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "email": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 254
+              }
+            },
+            "required": [
+              "csrf",
+              "email"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "reset": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "password": {
+                "type": "string",
+                "minLength": 15,
+                "maxLength": 72
+              }
+            },
+            "required": [
+              "csrf",
+              "code",
+              "password"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "two-factor": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "csrf",
+              "code"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "two-factor/setup": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "operation": {
+                "type": "string",
+                "enum": [
+                  "begin",
+                  "confirm"
+                ]
+              },
+              "password": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 72
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "csrf",
+              "operation"
+            ],
+            "additionalProperties": false,
+            "oneOf": [
+              {
+                "properties": {
+                  "operation": {
+                    "const": "begin"
+                  }
+                },
+                "required": [
+                  "password"
+                ]
+              },
+              {
+                "properties": {
+                  "operation": {
+                    "const": "confirm"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "two-factor/disable": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "password": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 72
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "csrf",
+              "password",
+              "code"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "logout": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "csrf"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  }
+}

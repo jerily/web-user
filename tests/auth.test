@@ -260,4 +260,16 @@ test auth-14 {invalid policy/issuer fail before mounting; route methods remain r
     $router destroy
     set result
 } -cleanup {::authtest::cleanup} -result {1 1 1 1 1 1 1 404 405 405}
+
+test auth-15 {OpenAPI rejects missing, short and undeclared form fields without exposing values} -setup {::authtest::setup} -body {
+    ::authtest::call GET /user/register
+    set result {}
+    foreach fields [list {email person@example.com} {email person@example.com password short} \
+        [dict create email person@example.com password $::authtest::password extra submitted-secret-value]] {
+        lappend result [::authtest::call POST /user/register $fields]
+    }
+    lappend result [expr {[string first submitted-secret-value [dict get $::authtest::last body]] < 0}]
+    lappend result [llength [::web::user::rows $::authtest::store web_user_users]]
+    set result
+} -cleanup {::authtest::cleanup} -result {400 400 400 1 0}
 cleanupTests
