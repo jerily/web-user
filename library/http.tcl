@@ -11,21 +11,10 @@ proc ::web::user::header {request name} {
     return {}
 }
 proc ::web::user::cookie_token {config request} {
-    set result {}
-    foreach pair [split [header $request cookie] {;}] {
-        set parts [split [string trim $pair] =]
-        if {[lindex $parts 0] eq [dict get $config -cookie]} {
-            if {$result ne {} || [llength $parts] != 2} {return {}}
-            set result [lindex $parts 1]
-        }
-    }
-    return $result
+    ::tsession::cookie::read [dict get $config -session-cookie] $request
 }
 proc ::web::user::set_cookie {config response token} {
-    set cookie "[dict get $config -cookie]=$token; Path=/; HttpOnly; SameSite=Lax"
-    if {[dict get $config -store -env] eq "PROD"} {append cookie "; Secure"}
-    dict set response headers set-cookie $cookie
-    return $response
+    ::tsession::cookie::issue [dict get $config -session-cookie] $response $token
 }
 proc ::web::user::csrf_token {config token} {tag [dict get $config -store] $token csrf}
 # Public callbacks for hosts and mounted content packages.
@@ -40,7 +29,7 @@ proc ::web::user::csrf {config action request context submitted} {
     set token [cookie_token $config $request]
     if {[session [dict get $config -store] $token] eq {}} {return [expr {$action eq "issue" ? "" : 0}]}
     if {$action eq "issue"} {return [csrf_token $config $token]}
-    expr {[::tink::constant_time_equal [csrf_token $config $token] $submitted] &&
+    expr {[verify_tag [dict get $config -store] $submitted $token csrf] &&
         ([header $request origin] eq {} || [header $request origin] eq [dict get $config -config origin])}
 }
 proc ::web::user::decode {value} {
@@ -120,6 +109,7 @@ proc ::web::user::render {config view token {extra {}}} {
     if {[dict get $store -env] ne "LOCAL"} {dict set fields debug_code {}}
     set context [text_fields $fields]
     dict set context mfa_enabled [list BOOL $enabled]
+    dict set context signed_in [list BOOL [expr {$user ne {}}]]
     set templates [dict get $config -templates]
     response 200 [::jinja2::render [dict get $templates form.html.jinja] \
         [::tjson::typed_to_json [list M $context]] -templates $templates -path form.html.jinja]

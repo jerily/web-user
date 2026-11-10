@@ -1,6 +1,6 @@
 {
   "name": "web-user",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "scripts": {},
   "dependencies": {
     "tcl": ">=8.6.0,<10.0.0",
@@ -8,12 +8,15 @@
     "tpathexp": "^1.1.0",
     "jinja2-tcl": "^0.1.0",
     "tjson": "^1.0.26",
-    "tink-tcl": "20240704.0.3",
+    "tink-tcl": "20240704.0.2",
     "tmfa": "1.1.2",
     "tqrcodegen": "^1.1.0",
     "ksuid-tcl": "^1.0.5",
     "tdbcsqlite3": ">=1.1.8",
-    "tdbcpostgres": ">=1.1.8"
+    "tdbcpostgres": ">=1.1.8",
+    "bcrypt-tcl": "2.0.1",
+    "twebserver": "^1.47.55",
+    "tsession": "1.0.4"
   },
   "devDependencies": {}
 }
