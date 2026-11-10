@@ -1,37 +1,54 @@
 proc ::web::user::mount {router args} {
     variable root
-    set c [options {-store {} -prefix /user -config {} -deliver {}} {*}$args]
-    set settings [options {master_template {} templates {} title Account issuer Community origin {}} {*}[dict get $c -config]]
-    set store [dict get $c -store]
+    set config [options {-store {} -prefix {} -config {} -deliver {}} {*}$args]
+    set settings [options {prefix /user deliver {} master_template {} templates {} title Account issuer {} origin {} properties {}} {*}[dict get $config -config]]
+    foreach key {prefix deliver} {
+        if {[dict get $config -$key] ne {}} {dict set settings $key [dict get $config -$key]}
+        dict set config -$key [dict get $settings $key]
+    }
+    set store [dict get $config -store]
     if {$store eq {}} {error "-store is required"}
     set origin [dict get $settings origin]
     if {![regexp {^https?://[A-Za-z0-9.:-]+$} $origin] || ([dict get $store -env] eq "PROD" && ![string match https://* $origin])} {
         error "origin must be the site's exact origin (HTTPS in PROD)"
     }
-    set prefix [string trimright [dict get $c -prefix] /]
+    set prefix [string trimright [dict get $config -prefix] /]
     if {![regexp {^(/[A-Za-z0-9_-]+)+$} $prefix]} {error "mount prefix must be a non-root local path"}
-    dict set c -prefix $prefix
-    dict set c -config $settings
-    ::tmfa::keyuri MZXW6 totp test -issuer [dict get $settings issuer]
+    dict set config -prefix $prefix
+    dict set config -config $settings
+    # Validate the label directly. Provisioning happens only with a user's
+    # generated secret and account address during enrollment.
+    if {[regexp {[:\x00-\x1f\x7f]} [dict get $settings issuer]]} {
+        error "issuer cannot contain colons or control characters"
+    }
     set name web_user_[string range [tag $store $prefix cookie] end-23 end]
     if {[dict get $store -env] eq "PROD"} {set name __Host-$name}
-    dict set c -cookie $name
-    dict set c -session-cookie [::tsession::cookie::create -name $name -mac [dict get $store -mac] \
+    dict set config -cookie $name
+    dict set config -session-cookie [::tsession::cookie::create -name $name -mac [dict get $store -mac] \
         -secure [expr {[dict get $store -env] eq "PROD"}]]
     set templates {}
     foreach filename {page.html.jinja form.html.jinja} {dict set templates $filename [read_text [file join $root assets $filename]]}
     set templates [dict merge $templates [dict get $settings templates]]
     if {[dict get $settings master_template] ne {}} {dict set templates page.html.jinja [dict get $settings master_template]}
     dict for {name text} $templates {::jinja2::validate $text -templates $templates -path $name}
-    dict set c -templates $templates
-    set routes [list $prefix account $prefix/ account]
-    foreach path {register verify login forgot reset two-factor two-factor/setup two-factor/disable logout} {lappend routes $prefix/$path $path}
-    foreach {path action} $routes {
+    dict set config -templates $templates
+    dict set config -operations [request_operations $store]
+    # Check collisions before installing any route.
+    foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/login \
+        $prefix/forgot $prefix/reset $prefix/two-factor $prefix/two-factor/setup \
+        $prefix/two-factor/disable $prefix/logout] {
         if {[dict get [$router match GET $path] statusCode] != 404} {error "route already mounted: $path"}
     }
-    foreach {path action} $routes {
-        set methods [expr {$action eq "account" ? "GET" : ($action eq "logout" ? "POST" : "GET POST")}]
-        $router add $methods $path [list ::web::user::dispatch $c $action] -strict true
-    }
-    return $c
+    $router add GET $prefix [list ::web::user::account $config] -strict true
+    $router add GET $prefix/ [list ::web::user::account $config] -strict true
+    $router add {GET POST} $prefix/register [list ::web::user::register $config] -strict true
+    $router add {GET POST} $prefix/verify [list ::web::user::verify $config] -strict true
+    $router add {GET POST} $prefix/login [list ::web::user::login $config] -strict true
+    $router add {GET POST} $prefix/forgot [list ::web::user::forgot $config] -strict true
+    $router add {GET POST} $prefix/reset [list ::web::user::reset $config] -strict true
+    $router add {GET POST} $prefix/two-factor [list ::web::user::two_factor $config] -strict true
+    $router add {GET POST} $prefix/two-factor/setup [list ::web::user::two_factor_setup $config] -strict true
+    $router add {GET POST} $prefix/two-factor/disable [list ::web::user::two_factor_disable $config] -strict true
+    $router add POST $prefix/logout [list ::web::user::logout $config] -strict true
+    return $config
 }

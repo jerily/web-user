@@ -7,7 +7,7 @@ proc ::web::user::session {store token} {
 proc ::web::user::new_session {store {kind anon} {uid {}} {code {}}} {
     set token [random_token]
     set id [tag $store $token session]
-    set ttl [expr {$kind eq "auth" ? 43200 : ($kind in {verify reset} ? 900 : 600)}]
+    set ttl [property $store [expr {$kind eq "auth" ? "session_ttl" : ($kind in {verify reset} ? "code_ttl" : "challenge_ttl")}]]
     set codeTag [expr {$code eq {} ? {} : [tag $store $code [list code $id]]}]
     insert $store web_user_sessions [dict create id $id uid $uid kind $kind \
         expires [expr {[clock seconds] + $ttl}] code_tag $codeTag attempts 0 pending_secret {}]
@@ -33,11 +33,12 @@ proc ::web::user::authenticated {store row} {
 }
 # Persistent fixed windows survive process restarts. Count BEFORE the business transaction.
 proc ::web::user::throttle {store subject maximum} {
-    set bucket [expr {[clock seconds] / 900}]
+    set window [property $store throttle_window]
+    set bucket [expr {[clock seconds] / $window}]
     set id [tag $store [list $subject $bucket] limit]
     set where [dict create id $id]
     if {[one $store web_user_limits $where] eq {}} {
-        if {[catch {insert $store web_user_limits [dict create id $id hits 0 expires [expr {($bucket + 1) * 900}]]} message opts]} {
+        if {[catch {insert $store web_user_limits [dict create id $id hits 0 expires [expr {($bucket + 1) * $window}]]} message opts]} {
             if {[one $store web_user_limits $where] eq {}} {return -options $opts $message}
         }
     }

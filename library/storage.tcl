@@ -12,13 +12,13 @@ proc ::web::user::environment {} {
 }
 # The host owns and closes one connection per worker. Never fall back in PROD.
 proc ::web::user::connect {config} {
-    set c [options {sqlite_path {} postgresql {}} {*}$config]
+    set config [options {sqlite_path {} postgresql {}} {*}$config]
     if {[environment] eq "LOCAL"} {
-        if {[dict get $c sqlite_path] eq {}} {error "sqlite_path is required"}
-        return [db_connect -dialect sqlite -database [dict get $c sqlite_path] -autobegin 0]
+        if {[dict get $config sqlite_path] eq {}} {error "sqlite_path is required"}
+        return [db_connect -dialect sqlite -database [dict get $config sqlite_path] -autobegin 0]
     }
-    if {[dict get $c postgresql] eq {}} {error "postgresql connection options are required in PROD"}
-    set pg [dict get $c postgresql]
+    if {[dict get $config postgresql] eq {}} {error "postgresql connection options are required in PROD"}
+    set pg [dict get $config postgresql]
     foreach {key value} $pg {
         if {$key ni {-host -port -database -user -password -sslmode -timeout -encoding}} {error "unsupported PostgreSQL option: $key"}
     }
@@ -45,14 +45,21 @@ proc ::web::user::initdb {connection} {
     }
 }
 proc ::web::user::create {args} {
-    set c [options {-connection {} -tenant {} -aead {} -mac {}} {*}$args]
-    foreach key {-connection -tenant -aead -mac} {if {[dict get $c $key] eq {}} {error "$key is required"}}
-    dict set c -env [environment]
+    set config [options {-connection {} -config {} -tenant {} -aead {} -mac {}} {*}$args]
+    set settings [settings [dict get $config -config]]
+    # Retain the original options for callers; new hosts supply a config dictionary.
+    foreach key {tenant aead mac} {
+        if {[dict get $config -$key] ne {}} {dict set settings $key [dict get $config -$key]}
+        dict set config -$key [dict get $settings $key]
+    }
+    dict set config -config $settings
+    foreach key {-connection -tenant -aead -mac} {if {[dict get $config $key] eq {}} {error "$key is required"}}
+    dict set config -env [environment]
     # Validate both key handles before accepting any requests.
-    set probe [seal $c probe check]
-    if {[unseal $c $probe check] ne "probe"} {error "invalid encryption key"}
-    tag $c probe check
-    return $c
+    set probe [seal $config probe check]
+    if {[unseal $config $probe check] ne "probe"} {error "invalid encryption key"}
+    tag $config probe check
+    return $config
 }
 proc ::web::user::predicate {store where} {
     set terms [list [db_eq [db_col tenant] [db_value [dict get $store -tenant] -type text]]]

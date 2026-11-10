@@ -1,22 +1,23 @@
 {
   "name": "web-user",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "scripts": {},
   "dependencies": {
-    "tcl": ">=8.6.0,<10.0.0",
-    "tpersist": "^0.1.0",
+    "tcl": ">=9.1.0,<10.0.0",
+    "tpersist": "^0.1.1",
     "tpathexp": "^1.1.0",
-    "jinja2-tcl": "^0.1.0",
-    "tjson": "^1.0.26",
+    "jinja2-tcl": "^0.1.1",
+    "tjson": "^1.0.27",
     "tink-tcl": "20240704.0.2",
     "tmfa": "1.1.2",
-    "tqrcodegen": "^1.1.0",
+    "tqrcodegen": "^1.1.1",
     "ksuid-tcl": "^1.0.5",
     "tdbcsqlite3": ">=1.1.8",
     "tdbcpostgres": ">=1.1.8",
     "bcrypt-tcl": "2.0.1",
-    "twebserver": "^1.47.55",
-    "tsession": "1.0.4"
+    "twebserver": "^1.47.56",
+    "tsession": "1.0.4",
+    "topenapi": "^0.2.0"
   },
   "devDependencies": {}
 }

@@ -2,7 +2,7 @@ package require tcltest
 package require web-user
 namespace import ::tcltest::*
 namespace eval ::authtest {variable password {a long testing password}; variable serial 0}
-proc ::authtest::setup {{mode LOCAL}} {
+proc ::authtest::setup {{mode LOCAL} {policy {}} {mount {}}} {
     variable serial
     variable db
     variable store
@@ -20,9 +20,9 @@ proc ::authtest::setup {{mode LOCAL}} {
     }
     ::web::user::initdb $db
     set handles [list [::tink::register_keyset [::tink::aead::create_keyset AES256_GCM]] [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]]
-    set store [::web::user::create -connection $db -tenant test-[pid]-[incr serial] -aead [lindex $handles 0] -mac [lindex $handles 1]]
+    set store [::web::user::create -connection $db -config [dict merge [dict create tenant test-[pid]-[incr serial] aead [lindex $handles 0] mac [lindex $handles 1]] $policy]]
     set router [::tpathexp::router]
-    set config [::web::user::mount $router -store $store -config {origin https://community.test} -deliver ::authtest::delivery]
+    set config [::web::user::mount $router -store $store -config [dict merge {origin https://community.test deliver ::authtest::delivery} $mount]]
     set ::authtest::delivered {}
     set ::authtest::csrf {}
     set ::authtest::cookie {}
@@ -223,4 +223,53 @@ test auth-12 {obsolete password hash fails closed and can be replaced by email r
     lappend result [::authtest::login]
     set result
 } -cleanup {::authtest::cleanup} -result {401 200 200}
+
+test auth-13 {configured policy drives password, session, QR provisioning, LOCAL code and verification} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5 password_min_length 18 totp_digits 8 totp_period 60 totp_algorithm SHA256 session_ttl 120} {issuer {Test Garden}}
+} -body {
+    ::authtest::register
+    ::authtest::login
+    set store $::authtest::store
+    set row [::web::user::session $store [::authtest::token]]
+    set user [::web::user::user_by_id $store [dict get $row uid]]
+    set result [list [string match {$2b$05$*} [dict get $user password]] \
+        [expr {[dict get $row expires] - [clock seconds] > 110}]]
+    lappend result [::authtest::call POST /user/two-factor/setup [dict create operation begin password $::authtest::password]]
+    set row [::web::user::session $store [::authtest::token]]
+    set secret [::web::user::unseal $store [dict get $row pending_secret] [list mfa [dict get $row uid]]]
+    set uri [::tmfa::keyuri $secret totp person@example.com -issuer {Test Garden} -digits 8 -step 60 -algorithm SHA256]
+    set body [dict get $::authtest::last body]
+    set code [::web::user::totp_code $store $secret]
+    lappend result [expr {[string first [::tqrcodegen::encode_to_svg $uri] $body] >= 0}] \
+        [expr {[string first $code $body] >= 0}] [expr {[string first {pattern="[0-9]{8}"} $body] >= 0}]
+    lappend result [::authtest::call POST /user/two-factor/setup [dict create operation confirm code $code]]
+    lappend result [dict get [::authtest::me] mfa_enabled]
+    lappend result [catch {::web::user::password_hash {only fifteen xx} [dict get $store -config]}]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 200 1 1 1 200 1 1}
+
+test auth-14 {invalid policy/issuer fail before mounting; route methods remain restricted} -setup {::authtest::setup} -body {
+    set router [::tpathexp::router]
+    set result {}
+    foreach policy {{totp_digits 7} {totp_period 0} {totp_algorithm MD5} {bcrypt_cost 17} {password_min_length 2} {challenge_limit 0}} {
+        lappend result [catch {::web::user::settings $policy}]
+    }
+    lappend result [catch {::web::user::mount $router -store $::authtest::store -config {origin https://community.test issuer {bad:issuer}}}]
+    lappend result [dict get [$router match GET /user] statusCode]
+    lappend result [::authtest::call GET /user/logout] [::authtest::call POST /user]
+    $router destroy
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 1 1 1 1 404 405 405}
+
+test auth-15 {OpenAPI rejects missing, short and undeclared form fields without exposing values} -setup {::authtest::setup} -body {
+    ::authtest::call GET /user/register
+    set result {}
+    foreach fields [list {email person@example.com} {email person@example.com password short} \
+        [dict create email person@example.com password $::authtest::password extra submitted-secret-value]] {
+        lappend result [::authtest::call POST /user/register $fields]
+    }
+    lappend result [expr {[string first submitted-secret-value [dict get $::authtest::last body]] < 0}]
+    lappend result [llength [::web::user::rows $::authtest::store web_user_users]]
+    set result
+} -cleanup {::authtest::cleanup} -result {400 400 400 1 0}
 cleanupTests

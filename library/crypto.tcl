@@ -19,12 +19,14 @@ proc ::web::user::email {value} {
     return $value
 }
 # Passwords remain text until bcrypt-tcl converts them to standard UTF-8.
-proc ::web::user::password_hash {value} {
+proc ::web::user::password_hash {value {config {}}} {
+    set config [settings $config]
+    set minimum [dict get $config password_min_length]
     set bytes [encoding convertto utf-8 $value]
-    if {[string length $value] < 15 || [string length $bytes] > 72 || [string first \x00 $value] >= 0} {
-        fail 400 "Password must contain at least 15 characters, at most 72 UTF-8 bytes, and no NUL characters."
+    if {[string length $value] < $minimum || [string length $bytes] > 72 || [string first \x00 $value] >= 0} {
+        fail 400 "Password must contain at least $minimum characters, at most 72 UTF-8 bytes, and no NUL characters."
     }
-    ::bcrypt::hashpw $value [::bcrypt::gensalt 12]
+    ::bcrypt::hashpw $value [::bcrypt::gensalt [dict get $config bcrypt_cost]]
 }
 proc ::web::user::password_ok {user value} {
     set bytes [encoding convertto utf-8 $value]
@@ -40,11 +42,18 @@ proc ::web::user::verify_tag {store digest value purpose} {
         [encoding convertto utf-8 [list web-user [dict get $store -tenant] $purpose $value]]
 }
 proc ::web::user::totp_step {store secret code last} {
-    if {![regexp {^[0-9]{6}$} $code]} {return -1}
-    set now [expr {[clock seconds] / 30}]
-    foreach step [list $now [expr {$now - 1}] [expr {$now + 1}]] {
+    set digits [property $store totp_digits]
+    if {[string length $code] != $digits || ![regexp {^[0-9]+$} $code]} {return -1}
+    set now [expr {[clock seconds] / [property $store totp_period]}]
+    set window [property $store totp_window]
+    set steps [list $now]
+    for {set offset 1} {$offset <= $window} {incr offset} {
+        lappend steps [expr {$now - $offset}] [expr {$now + $offset}]
+    }
+    foreach step $steps {
+        if {$step < 0} {continue}
         # Use Tink's native MAC verification for the comparison.
-        set expected [tag $store [::tmfa::get_hotp $secret $step 6 SHA1] totp-check]
+        set expected [tag $store [::tmfa::get_hotp $secret $step $digits [property $store totp_algorithm]] totp-check]
         if {$step > $last && [verify_tag $store $expected $code totp-check]} {return $step}
     }
     return -1
