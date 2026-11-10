@@ -6,7 +6,7 @@ namespace eval ::web::user {
     variable root [file dirname [file dirname [info script]]]
     namespace import ::tpersist::db_*
 }
-foreach module {storage settings validation crypto sessions service http mount} {
+foreach module {storage settings validation crypto profiles sessions service http widgets mount} {
     source [file join $::web::user::root library $module.tcl]
 }
-package provide web-user 0.1.4
+package provide web-user 0.1.5

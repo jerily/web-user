@@ -30,6 +30,7 @@ proc ::web::user::initdb {connection} {
             tenant text id text email_key text email text password text verified integer
             mfa_secret text last_step bigint revision integer created_at bigint
         } {tenant id}
+        web_user_profiles {tenant text id text first_name text last_name text} {tenant id}
         web_user_sessions {
             tenant text id text uid text kind text expires bigint code_tag text attempts integer pending_secret text
         } {tenant id}

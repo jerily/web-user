@@ -22,8 +22,11 @@ proc ::web::user::rotate {store row kind {uid {}} {code {}}} {
 }
 proc ::web::user::revoke {store uid} {remove $store web_user_sessions [dict create uid $uid]}
 proc ::web::user::public_user {store user} {
-    dict create id [dict get $user id] email [unseal $store [dict get $user email] [list email [dict get $user id]]] \
-        mfa_enabled [expr {[dict get $user mfa_secret] ne {}}]
+    set names [profile_names $store [dict get $user id]]
+    set displayName [dict get $names first_name]
+    if {$displayName eq {}} {set displayName Member}
+    dict merge $names [dict create display_name $displayName id [dict get $user id] email [unseal $store [dict get $user email] [list email [dict get $user id]]] \
+        mfa_enabled [expr {[dict get $user mfa_secret] ne {}}]]
 }
 proc ::web::user::authenticated {store row} {
     if {$row eq {} || [dict get $row kind] ne "auth"} {return {}}

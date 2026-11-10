@@ -6,6 +6,7 @@
 {% if debug_code %}<aside class="local-code"><strong>LOCAL development code</strong><code id="local-code">{{ debug_code }}</code></aside>{% endif %}
 {% if view == "account" %}
 <p>Signed in as {{ email }}</p>
+{% if collect_names %}<p>{{ first_name }} {{ last_name }} · <a href="{{ prefix }}/profile">Edit profile</a></p>{% endif %}
 {% if mfa_enabled %}<p>Authenticator enabled.</p><a href="{{ prefix }}/two-factor/disable">Disable authenticator</a>{% else %}<p>Add an authenticator app to protect your account.</p><a href="{{ prefix }}/two-factor/setup">Set up authenticator</a>{% endif %}
 <form method="post" action="{{ prefix }}/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Sign out</button></form>
 {% else %}
@@ -13,6 +14,11 @@
 <input type="hidden" name="csrf" value="{{ csrf }}">
 {% if view == "register" or view == "login" or view == "forgot" %}
 <label>Email <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+{% endif %}
+{% if collect_names and (view == "register" or view == "profile") %}
+<label>First name <input name="first_name" value="{{ first_name }}" autocomplete="given-name" maxlength="100" required></label>
+<label>Last name <input name="last_name" value="{{ last_name }}" autocomplete="family-name" maxlength="100" required></label>
+<p>Your first name is used as your public display name. Your last name stays private.</p>
 {% endif %}
 {% if view == "register" or view == "reset" %}
 <label>New password <input name="password" type="password" autocomplete="new-password" minlength="{{ password_min_length }}" required></label><p>Use at least {{ password_min_length }} characters and at most 72 UTF-8 bytes.</p>

@@ -386,4 +386,93 @@ test auth-20 {password reset preserves leading zeros and requires exactly six nu
     rename ::authtest::original_verification_code ::web::user::verification_code
     ::authtest::cleanup
 } -result {200 reset 000008 1 1 400 400 400 200 200}
+
+proc ::authtest::register_named {{first {Zoë <b>}} {last O'Neil}} {
+    call GET /user/register
+    set fields [dict create email person@example.com password $::authtest::password first_name $first last_name $last]
+    if {[call POST /user/register $fields] != 200} {error $::authtest::last}
+    if {[call POST /user/verify [dict create code [lindex $::authtest::delivered 2]]] != 200} {error $::authtest::last}
+}
+
+test auth-21 {name collection defaults off and does not accept hidden profile fields} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+} -body {
+    ::authtest::call GET /user/register
+    set result [list [expr {[string first {name="first_name"} [dict get $::authtest::last body]] < 0}]]
+    lappend result [::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password first_name Mira last_name Fern]]
+    ::authtest::register
+    ::authtest::login
+    lappend result [dict get [::authtest::me] display_name] [::authtest::call GET /user/profile] \
+        [llength [::web::user::rows $::authtest::store web_user_profiles]]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 400 Member 404 0}
+
+test auth-22 {names round-trip encrypted; widgets expose only an escaped first name} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5 collect_names true}
+} -body {
+    ::authtest::register_named {  Zoë <b>  }
+    ::authtest::login
+    set current [::authtest::me]
+    set uid [dict get $current id]
+    set row [::web::user::one $::authtest::store web_user_profiles [dict create id $uid]]
+    set widget [::web::user::widget $::authtest::config profile [dict create user_id $uid] {} {}]
+    set result [list [dict get $current first_name] [dict get $current last_name] [dict get $current display_name] \
+        [expr {[dict get $row first_name] ne [dict get $current first_name]}] \
+        [expr {[dict get $row last_name] ne [dict get $current last_name]}] \
+        [expr {[string first {Zoë &lt;b&gt;} $widget] >= 0}] \
+        [expr {[string first {O'Neil} $widget] < 0 && [string first person@example.com $widget] < 0}] \
+        [catch {::web::user::unseal $::authtest::store [dict get $row first_name] [list profile $uid last_name]}]]
+    set other $::authtest::store
+    dict set other -tenant another-tenant
+    lappend result [dict get [::web::user::public_profile $other $uid] display_name]
+    ::web::user::update $::authtest::store web_user_users [dict create id $uid] {verified 0}
+    lappend result [dict get [::web::user::public_profile $::authtest::store $uid] display_name]
+    set result
+} -cleanup {::authtest::cleanup} -result {{Zoë <b>} O'Neil {Zoë <b>} 1 1 1 1 1 Member Member}
+
+test auth-23 {enabled names are required, bounded and reject controls while accepting Unicode} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5 collect_names true}
+} -body {
+    ::authtest::call GET /user/register
+    set result [list [expr {[string first {name="first_name"} [dict get $::authtest::last body]] >= 0}]]
+    set fields [dict create email person@example.com password $::authtest::password]
+    foreach names [list {} {first_name Mira} {first_name {   } last_name Fern} \
+        [dict create first_name "Mi\nra" last_name Fern] [dict create first_name [string repeat x 101] last_name Fern]] {
+        lappend result [::authtest::call POST /user/register [dict merge $fields $names]]
+    }
+    lappend result [::authtest::call POST /user/register [dict merge $fields {first_name 李 last_name 王}]] \
+        [catch {::web::user::settings {collect_names maybe}}]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 400 400 400 400 400 200 1}
+
+test auth-24 {existing members can edit names only with authentication and CSRF; initialization preserves accounts} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5 collect_names true}
+} -body {
+    ::authtest::register_named
+    set user [lindex [::web::user::rows $::authtest::store web_user_users] 0]
+    set uid [dict get $user id]
+    ::tpersist::db_drop_table $::authtest::db web_user_profiles
+    ::web::user::initdb $::authtest::db
+    set result [list [::authtest::call GET /user/profile] \
+        [::authtest::call POST /user/profile {first_name Mira last_name Fern}]]
+    ::authtest::login
+    lappend result [dict get [::authtest::me] display_name] [::authtest::call GET /user/profile]
+    lappend result [::authtest::call POST /user/profile {first_name Mira last_name Fern csrf wrong}]
+    lappend result [::authtest::call POST /user/profile {first_name Mira last_name Fern}]
+    lappend result [dict get [::authtest::me] display_name] [dict get [::authtest::me] last_name] \
+        [expr {[dict get [::authtest::me] id] eq $uid}]
+    set result
+} -cleanup {::authtest::cleanup} -result {401 401 Member 200 403 200 Mira Fern 1}
+
+test auth-25 {retry registration updates pending names but cannot replace a verified profile} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5 collect_names true}
+} -body {
+    ::authtest::call GET /user/register
+    set fields [dict create email person@example.com password $::authtest::password first_name Old last_name Name]
+    ::authtest::call POST /user/register $fields
+    ::authtest::register_named Mira Fern
+    ::authtest::call POST /user/register $fields
+    ::authtest::login
+    list [dict get [::authtest::me] first_name] [dict get [::authtest::me] last_name]
+} -cleanup {::authtest::cleanup} -result {Mira Fern}
 cleanupTests
