@@ -23,7 +23,18 @@ proc ::web::user::request_operations {store} {
         set path [format {$.%s.requestBody.content['application/x-www-form-urlencoded'].schema.properties.password} $action]
         dict set overrides $path [dict create minLength [property $store password_min_length]]
     }
-    read_operations [file join $root assets operations.json] $overrides
+    set operations [read_operations [file join $root assets operations.json] $overrides]
+    if {![property $store collect_names]} {
+        set document [::tjson::parse [dict get $operations register]]
+        try {
+            set schema [lindex [::tjson::query $document {$.requestBody.content['application/x-www-form-urlencoded'].schema}] 0]
+            set properties [::tjson::get_object_item $schema properties]
+            foreach key {first_name last_name} {::tjson::delete_item_from_object $properties $key}
+            ::tjson::replace_item_in_object $schema required {L {{S csrf} {S email} {S password}}}
+            dict set operations register [::tjson::to_json $document]
+        } finally {::tjson::destroy $document}
+    }
+    return $operations
 }
 # Strict decoding happens first. topenapi then checks the action's required
 # fields, lengths and enums. Do not expose validation diagnostics with credentials.

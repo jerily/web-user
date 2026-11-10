@@ -2,6 +2,7 @@
 proc ::web::user::action_register {config row fields} {
     set store [dict get $config -store]
     set result [dict create message {} debug_code {} delivery {}]
+    set names [name_fields $store $fields]
     set address [email [dict get $fields email]]
     set hash [password_hash [dict get $fields password] [dict get $store -config]]
     set emailKey [tag $store $address email]
@@ -21,6 +22,7 @@ proc ::web::user::action_register {config row fields} {
         if {[dict get $row uid] eq $uid} {set row {}}
     }
     if {$uid ne {}} {
+        if {$names ne {}} {save_profile $store $uid $names}
         dict set result delivery [list verify $address $code]
         dict set result debug_code $code
     }
@@ -175,4 +177,14 @@ proc ::web::user::check_code {store row kind code} {
         ![verify_tag $store [dict get $row code_tag] $code [list code [dict get $row id]]]} {
         fail 400 "Invalid or expired code."
     }
+}
+
+# Existing members can supply or correct names without changing credentials.
+proc ::web::user::action_profile {config row fields} {
+    set store [dict get $config -store]
+    set user [require_user $store $row]
+    set names [name_fields $store $fields]
+    save_user $store $user {}
+    save_profile $store [dict get $user id] $names
+    dict create token {} view account message {Profile updated.} debug_code {} delivery {}
 }

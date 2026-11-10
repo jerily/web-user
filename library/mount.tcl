@@ -27,7 +27,7 @@ proc ::web::user::mount {router args} {
     dict set config -session-cookie [::tsession::cookie::create -name $name -mac [dict get $store -mac] \
         -secure [expr {[dict get $store -env] eq "PROD"}]]
     set templates {}
-    foreach filename {page.html.jinja form.html.jinja} {dict set templates $filename [read_text [file join $root assets $filename]]}
+    foreach filename {page.html.jinja form.html.jinja profile.html.jinja} {dict set templates $filename [read_text [file join $root assets $filename]]}
     set templates [dict merge $templates [dict get $settings templates]]
     if {[dict get $settings master_template] ne {}} {dict set templates page.html.jinja [dict get $settings master_template]}
     dict for {name text} $templates {::jinja2::validate $text -templates $templates -path $name}
@@ -36,7 +36,7 @@ proc ::web::user::mount {router args} {
     # Check collisions before installing any route.
     foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/login \
         $prefix/forgot $prefix/reset $prefix/two-factor $prefix/two-factor/setup \
-        $prefix/two-factor/disable $prefix/logout] {
+        $prefix/two-factor/disable $prefix/logout $prefix/profile] {
         if {[dict get [$router match GET $path] statusCode] != 404} {error "route already mounted: $path"}
     }
     $router add GET $prefix [list ::web::user::account $config] -strict true
@@ -49,6 +49,9 @@ proc ::web::user::mount {router args} {
     $router add {GET POST} $prefix/two-factor [list ::web::user::two_factor $config] -strict true
     $router add {GET POST} $prefix/two-factor/setup [list ::web::user::two_factor_setup $config] -strict true
     $router add {GET POST} $prefix/two-factor/disable [list ::web::user::two_factor_disable $config] -strict true
+    if {[property $store collect_names]} {
+        $router add {GET POST} $prefix/profile [list ::web::user::profile $config] -strict true
+    }
     $router add POST $prefix/logout [list ::web::user::logout $config] -strict true
     return $config
 }

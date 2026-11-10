@@ -8,7 +8,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.1.4
+package require web-user 0.1.5
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
@@ -31,6 +31,17 @@ backend policy. Schema changes never happen in `mount` or request handlers.
 
 Requires Tcl 9.1 or newer. Dependency minimums include tpersist 0.1.1,
 Jinja 0.1.1, tjson 1.0.27, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.56.
+
+## Names and shared widgets
+
+Set `collect_names true` in the account config to collect first and last names;
+the default is false. Existing members can add names through `/user/profile`.
+Names are encrypted at rest. The reusable profile widget exposes the first name
+as `display_name`, with `Member` as the fallback. See [WIDGETS.md](WIDGETS.md) for
+the callback API and host wiring.
+
+Run `initdb` when upgrading to add `web_user_profiles`; existing account records
+are preserved. The community site's LOCAL initialization does this automatically.
 
 ## Flows
 

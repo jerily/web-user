@@ -84,14 +84,14 @@ proc ::web::user::render {config view token {extra {}}} {
     set user [authenticated $store $row]
     set fields [dict merge [dict create title [string totitle [string map {- { } / { }} $view]] \
         view $view prefix [dict get $config -prefix] brand [dict get $config -config title] \
-        csrf [csrf_token $config $token] message {} debug_code {} email {} qr {} secret {}] $extra]
+        csrf [csrf_token $config $token] message {} debug_code {} email {} first_name {} last_name {} qr {} secret {}] $extra]
     set enabled 0
     if {$user ne {}} {
         set public [public_user $store $user]
-        dict set fields email [dict get $public email]
+        foreach key {email first_name last_name} {dict set fields $key [dict get $public $key]}
         set enabled [dict get $public mfa_enabled]
     }
-    if {$view in {account two-factor/setup two-factor/disable}} {require_user $store $row}
+    if {$view in {account profile two-factor/setup two-factor/disable}} {require_user $store $row}
     if {$view eq "two-factor/setup" && [dict get $row pending_secret] ne {}} {
         set secret [unseal $store [dict get $row pending_secret] [list mfa [dict get $user id]]]
         set uri [::tmfa::keyuri $secret totp [dict get $fields email] -issuer [dict get $config -config issuer] {*}[totp_options $store]]
@@ -112,6 +112,7 @@ proc ::web::user::render {config view token {extra {}}} {
     dict set fields password_min_length [property $store password_min_length]
     dict set fields totp_digits [property $store totp_digits]
     set context [dict merge [dict get $config -config properties] [text_fields $fields]]
+    dict set context collect_names [list BOOL [property $store collect_names]]
     dict set context mfa_enabled [list BOOL $enabled]
     dict set context signed_in [list BOOL [expr {$user ne {}}]]
     set templates [dict get $config -templates]
@@ -199,4 +200,8 @@ proc ::web::user::two_factor_disable {config request context params} {
 
 proc ::web::user::logout {config request context params} {
     handle $config logout ::web::user::action_logout 0 $request $context
+}
+
+proc ::web::user::profile {config request context params} {
+    handle $config profile ::web::user::action_profile 0 $request $context
 }

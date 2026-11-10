@@ -3,12 +3,14 @@
 proc ::web::user::settings {config} {
     set config [options {
         tenant {} aead {} mac {}
-        bcrypt_cost 12 password_min_length 15
+        bcrypt_cost 12 password_min_length 15 collect_names false
         totp_digits 6 totp_period 30 totp_algorithm SHA1 totp_window 1
         session_ttl 43200 code_ttl 900 challenge_ttl 600
         throttle_window 900 browse_limit 120 post_limit 60 account_limit 10 challenge_limit 5
         form_max_bytes 32768
     } {*}$config]
+    if {![string is boolean -strict [dict get $config collect_names]]} {error "collect_names must be a boolean"}
+    dict set config collect_names [expr {!![dict get $config collect_names]}]
     foreach {key minimum maximum} {
         bcrypt_cost 4 16 password_min_length 6 72
         totp_period 1 120 totp_window 0 2
