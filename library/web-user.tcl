@@ -9,4 +9,4 @@ namespace eval ::web::user {
 foreach module {storage settings validation crypto sessions service http mount} {
     source [file join $::web::user::root library $module.tcl]
 }
-package provide web-user 0.1.3
+package provide web-user 0.1.4

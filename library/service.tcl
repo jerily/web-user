@@ -6,7 +6,7 @@ proc ::web::user::action_register {config row fields} {
     set hash [password_hash [dict get $fields password] [dict get $store -config]]
     set emailKey [tag $store $address email]
     set user [one $store web_user_users [dict create email_key $emailKey]]
-    set code [random_token]
+    set code [verification_code]
     set uid {}
     if {$user eq {}} {
         set uid [::ksuid::generate_ksuid]
@@ -67,7 +67,7 @@ proc ::web::user::action_forgot {config row fields} {
     set result [dict create message {} debug_code {} delivery {}]
     set address [email [dict get $fields email]]
     set user [one $store web_user_users [dict create email_key [tag $store $address email]]]
-    set code [random_token]
+    set code [verification_code]
     set uid {}
     if {$user ne {} && [dict get $user verified]} {
         set uid [dict get $user id]

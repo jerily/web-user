@@ -8,7 +8,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.1.3
+package require web-user 0.1.4
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
@@ -38,15 +38,16 @@ The lifetimes, password and TOTP policy below are defaults. Configure them in
 `create -config`; see [MOUNTING.md](MOUNTING.md).
 
 - Register with email and a password of at least 15 characters (up to 72 UTF-8
-  bytes), then verify the email code before logging in. Email normalization trims
-  and lowercases; passwords are preserved exactly. Register again to replace a
-  lost/expired verification code and pending password. Verified accounts cannot
-  be overwritten by registration.
+  bytes), then enter the six-digit numeric email confirmation code before logging
+  in. Email normalization trims and lowercases; passwords are preserved exactly.
+  Register again to replace a lost/expired verification code and pending password.
+  Verified accounts cannot be overwritten by registration.
 - Login rotates the session. MFA-enabled accounts get only a pending challenge,
   never an authenticated principal, until the authenticator code succeeds.
-- Forgot password produces a generic response. Reset requires the email code in
-  the requesting browser, expires after 15 minutes, changes the password once,
-  invalidates every session/reset challenge for that account, and preserves MFA.
+- Forgot password produces a generic response. Reset requires the six-digit
+  email code in the requesting browser, expires after 15 minutes, changes the
+  password once, invalidates every session/reset challenge for that account, and
+  preserves MFA.
 - Authenticator setup requires the current password. A pending, encrypted secret
   produces an `otpauth://` QR code and manual key. It becomes active only after
   confirmation. Disabling requires both the password and an unused current OTP.
@@ -68,8 +69,10 @@ setup secrets necessarily appear during enrollment in both environments.
 
 ## Security and operations
 
-User IDs are KSUIDs. Session/recovery codes use 32 random bytes from OpenSSL via
-`twebserver::random_bytes`, and are stored only as Tink MAC digests bound to tenant and purpose.
+User IDs are KSUIDs. Email confirmation and password-reset codes are six uniformly
+random digits, including leading zeros. Session tokens use 32 random bytes. Both use
+OpenSSL through `twebserver::random_bytes` and are stored only as Tink MAC digests
+bound to tenant and purpose.
 Email is encrypted with Tink AEAD and looked up by a keyed digest. MFA secrets
 are AEAD-encrypted with tenant/user-associated data. Passwords use `bcrypt-tcl` at cost 12 with random salts. Inputs above 72 UTF-8
 bytes or containing NUL characters are rejected rather than truncated. Native

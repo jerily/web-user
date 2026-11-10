@@ -1,4 +1,11 @@
 proc ::web::user::random_token {} {binary encode hex [::twebserver::random_bytes 32]}
+# Accept 16 million of the 2^24 values to avoid bias when reducing to six digits.
+proc ::web::user::verification_code {} {
+    while {1} {
+        set value [scan [binary encode hex [::twebserver::random_bytes 3]] %x]
+        if {$value < 16000000} {return [format %06d [expr {$value % 1000000}]]}
+    }
+}
 proc ::web::user::tag {store value purpose} {
     binary encode hex [::tink::mac::compute [dict get $store -mac] \
         [encoding convertto utf-8 [list web-user [dict get $store -tenant] $purpose $value]]]
