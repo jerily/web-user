@@ -28,7 +28,7 @@ Set `ENV` to exactly `LOCAL` or `PROD` before loading the host configuration.
 schema explicitly before workers serve requests:
 
 ```tcl
-package require web-user 0.1.3
+package require web-user 0.1.4
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/accounts.sqlite3 \
     postgresql [dict create -host db -database accounts -user accounts]]]
@@ -173,7 +173,9 @@ complete adapter, persistent LOCAL keys, shared master, and all four mounts.
 An optional `deliver` config command prefix receives `purpose email code` after the
 transaction commits. `purpose` is `verify` or `reset`. Its default implementation
 is a TODO and sends nothing. Hosts must implement delivery for production use;
-callback failures propagate to the host. Never log codes or place them in URLs.
+callback failures propagate to the host. Verification and password-reset codes
+contain exactly six ASCII digits; preserve leading zeros when delivering them.
+Never log codes or place them in URLs.
 
 LOCAL shows verification, recovery and current authenticator codes in the forms.
 PROD suppresses those development fields; both modes enforce the same expiry,

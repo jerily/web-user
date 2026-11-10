@@ -105,13 +105,13 @@ test auth-3 {reset code once only, sessions revoked, password whitespace preserv
     set resetToken [::authtest::token]
     set code [lindex $::authtest::delivered 2]
     set new {  a different long password  }
-    set result [list [::authtest::call POST /user/reset [dict create code $code password $new]]]
+    set result [list [regexp {^[0-9]{6}$} $code] [::authtest::call POST /user/reset [dict create code $code password $new]]]
     lappend result [expr {[::web::user::session $::authtest::store $oldToken] eq {}}] [expr {[::web::user::session $::authtest::store $resetToken] eq {}}]
     lappend result [::authtest::call POST /user/reset [dict create code $code password $new]]
     lappend result [::authtest::call POST /user/login [dict create email person@example.com password [string trim $new]]]
     lappend result [::authtest::call POST /user/login [dict create email person@example.com password $new]]
     set result
-} -cleanup {::authtest::cleanup} -result {200 1 1 400 401 200}
+} -cleanup {::authtest::cleanup} -result {1 200 1 1 400 401 200}
 test auth-4 {2FA enrollment, pending principal, OTP replay and disable} -setup {::authtest::setup} -body {
     ::authtest::register
     ::authtest::login
@@ -137,13 +137,13 @@ test auth-5 {PROD never exposes codes, cookie is Secure, anonymous reset has sam
     ::authtest::register
     ::authtest::call POST /user/forgot {email person@example.com}
     set known [dict get $::authtest::last body]
+    regsub -all {name="csrf" value="[^"]+"} $known {CSRF} known
     set cookie [dict get $::authtest::last headers Set-Cookie]
     set code [lindex $::authtest::delivered 2]
     set result [list [expr {[string first $code $known] < 0}] [expr {[string first local-code $known] < 0}] \
         [string match {*; Secure;*} $cookie] [string match {__Host-*} $cookie]]
     ::authtest::call POST /user/forgot {email unknown@example.com}
     set unknown [dict get $::authtest::last body]
-    regsub -all {name="csrf" value="[^"]+"} $known {CSRF} known
     regsub -all {name="csrf" value="[^"]+"} $unknown {CSRF} unknown
     lappend result [expr {$known eq $unknown}]
     set result
@@ -151,8 +151,10 @@ test auth-5 {PROD never exposes codes, cookie is Secure, anonymous reset has sam
 test auth-6 {challenge attempt limits persist despite rejected transactions} -setup {::authtest::setup} -body {
     ::authtest::register
     ::authtest::call POST /user/forgot {email person@example.com}
+    set wrong 000000
+    if {[lindex $::authtest::delivered 2] eq $wrong} {set wrong 000001}
     set result {}
-    for {set i 0} {$i < 6} {incr i} {lappend result [::authtest::call POST /user/reset [dict create code invalid password $::authtest::password]]}
+    for {set i 0} {$i < 6} {incr i} {lappend result [::authtest::call POST /user/reset [dict create code $wrong password $::authtest::password]]}
     set result
 } -cleanup {::authtest::cleanup} -result {400 400 400 400 400 429}
 test auth-7 {invalid configuration fails before routing, tenant and purpose isolation} -setup {::authtest::setup} -body {
@@ -170,17 +172,27 @@ test auth-8 {retry pending registration invalidates old code and password; dupli
     ::authtest::call GET /user/register
     ::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]
     set old [lindex $::authtest::delivered 2]
+    set oldCookie $::authtest::cookie
+    set oldCsrf $::authtest::csrf
     set replacement {replacement pending password}
     ::authtest::call POST /user/register [dict create email person@example.com password $replacement]
     set code [lindex $::authtest::delivered 2]
-    set result [list [::authtest::call POST /user/verify [dict create code $old]] [::authtest::call POST /user/verify [dict create code $code]]]
+    set newCookie $::authtest::cookie
+    set newCsrf $::authtest::csrf
+    # The old challenge is invalid even if two random numeric codes coincide.
+    set ::authtest::cookie $oldCookie
+    set ::authtest::csrf $oldCsrf
+    set result [list [::authtest::call POST /user/verify [dict create code $old]]]
+    set ::authtest::cookie $newCookie
+    set ::authtest::csrf $newCsrf
+    lappend result [::authtest::call POST /user/verify [dict create code $code]]
     lappend result [::authtest::call POST /user/login [dict create email person@example.com password $::authtest::password]]
     lappend result [::authtest::call POST /user/login [dict create email person@example.com password $replacement]]
     ::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]
     ::authtest::call GET /user/login
     lappend result [::authtest::call POST /user/login [dict create email person@example.com password $replacement]]
     set result
-} -cleanup {::authtest::cleanup} -result {400 200 401 200 200}
+} -cleanup {::authtest::cleanup} -result {403 200 401 200 200}
 test auth-9 {reset preserves MFA, QR onboarding and LOCAL codes} -setup {::authtest::setup} -body {
     ::authtest::register
     ::authtest::login
@@ -286,4 +298,92 @@ test auth-16 {browser forms preserve configured origin without weakening CSRF ve
     lappend result [::authtest::call POST /user/register $fields {origin https://garden.example:8443}]
     set result
 } -cleanup {::authtest::cleanup} -result {same-origin 403 403 403 403 200}
+
+test auth-17 {numeric confirmation codes reject biased values and preserve six digits} -setup {
+    rename ::twebserver::random_bytes ::authtest::original_random_bytes
+    set ::authtest::randomValues {ffffff f42400 000000 000008 f423ff}
+    proc ::twebserver::random_bytes {length} {
+        if {$length != 3 || $::authtest::randomValues eq {}} {error "unexpected random byte request"}
+        set value [lindex $::authtest::randomValues 0]
+        set ::authtest::randomValues [lrange $::authtest::randomValues 1 end]
+        return [binary decode hex $value]
+    }
+} -body {
+    list [::web::user::verification_code] [::web::user::verification_code] \
+        [::web::user::verification_code] [llength $::authtest::randomValues]
+} -cleanup {
+    rename ::twebserver::random_bytes {}
+    rename ::authtest::original_random_bytes ::twebserver::random_bytes
+    unset ::authtest::randomValues
+} -result {000000 000008 999999 0}
+
+test auth-18 {confirmation preserves leading zeros, requires six digits and cannot be replayed} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+    rename ::web::user::verification_code ::authtest::original_verification_code
+    proc ::web::user::verification_code {} {return 000008}
+} -body {
+    ::authtest::call GET /user/register
+    set result [list [::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]]]
+    set code [lindex $::authtest::delivered 2]
+    set body [dict get $::authtest::last body]
+    lappend result $code [expr {[string first {id="local-code">000008</code>} $body] >= 0}] \
+        [expr {[string first {inputmode="numeric" pattern="[0-9]{6}"} $body] >= 0}]
+    foreach invalid {00008 0000080 00000x} {
+        lappend result [::authtest::call POST /user/verify [dict create code $invalid]]
+    }
+    lappend result [::authtest::call POST /user/verify [dict create code $code]] \
+        [::authtest::call POST /user/verify [dict create code $code]]
+    set result
+} -cleanup {
+    rename ::web::user::verification_code {}
+    rename ::authtest::original_verification_code ::web::user::verification_code
+    ::authtest::cleanup
+} -result {200 000008 1 1 400 400 400 200 400}
+
+test auth-19 {numeric confirmation codes expire and enforce the challenge attempt limit} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+} -body {
+    ::authtest::call GET /user/register
+    ::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]
+    set code [lindex $::authtest::delivered 2]
+    set row [::web::user::session $::authtest::store [::authtest::token]]
+    ::web::user::update $::authtest::store web_user_sessions [dict create id [dict get $row id]] {expires 0}
+    set result [list [regexp {^[0-9]{6}$} $code] [::authtest::call POST /user/verify [dict create code $code]]]
+    lappend result [dict get [::web::user::user_by_id $::authtest::store [dict get $row uid]] verified]
+    ::authtest::call GET /user/register
+    ::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]
+    set code [lindex $::authtest::delivered 2]
+    set wrong 000000
+    if {$code eq $wrong} {set wrong 000001}
+    for {set i 0} {$i < 5} {incr i} {
+        lappend result [::authtest::call POST /user/verify [dict create code $wrong]]
+    }
+    lappend result [::authtest::call POST /user/verify [dict create code $code]]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 403 0 400 400 400 400 400 429}
+
+test auth-20 {password reset preserves leading zeros and requires exactly six numeric digits} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+    ::authtest::register
+    rename ::web::user::verification_code ::authtest::original_verification_code
+    proc ::web::user::verification_code {} {return 000008}
+} -body {
+    set result [list [::authtest::call POST /user/forgot {email person@example.com}]]
+    set code [lindex $::authtest::delivered 2]
+    set body [dict get $::authtest::last body]
+    lappend result [lindex $::authtest::delivered 0] $code \
+        [expr {[string first {id="local-code">000008</code>} $body] >= 0}] \
+        [expr {[string first {inputmode="numeric" pattern="[0-9]{6}"} $body] >= 0}]
+    set password {a new reset password}
+    foreach invalid {00008 0000080 00000x} {
+        lappend result [::authtest::call POST /user/reset [dict create code $invalid password $password]]
+    }
+    lappend result [::authtest::call POST /user/reset [dict create code $code password $password]] \
+        [::authtest::call POST /user/login [dict create email person@example.com password $password]]
+    set result
+} -cleanup {
+    rename ::web::user::verification_code {}
+    rename ::authtest::original_verification_code ::web::user::verification_code
+    ::authtest::cleanup
+} -result {200 reset 000008 1 1 400 400 400 200 200}
 cleanupTests
