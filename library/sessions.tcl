@@ -51,7 +51,7 @@ proc ::web::user::throttle {store subject maximum} {
     if {[dict get [one $store web_user_limits $where] hits] > $maximum} {fail 429 "Too many attempts. Try again later."}
 }
 # TODO: deliver verification/reset messages by email. The default deliberately sends nothing.
-# Hosts can supply -deliver {command prefix}; it receives purpose, email, code.
+# Hosts configure a deliver command prefix; it receives purpose, email, code.
 proc ::web::user::deliver {config purpose destination code} {
     if {[dict get $config -deliver] ne {}} {{*}[dict get $config -deliver] $purpose $destination $code}
 }

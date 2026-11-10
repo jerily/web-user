@@ -28,13 +28,13 @@ Set `ENV` to exactly `LOCAL` or `PROD` before loading the host configuration.
 schema explicitly before workers serve requests:
 
 ```tcl
-package require web-user 0.1.5
+package require web-user 0.1.6
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/accounts.sqlite3 \
     postgresql [dict create -host db -database accounts -user accounts]]]
 ::web::user::initdb $connection
 set accountStore [::web::user::create -connection $connection -config [dict create tenant mysite \
-    aead $aeadHandle mac $macHandle]]
+    aead $aeadHandle mac $macHandle email_hash_salt $emailHashSalt]]
 set router [::tpathexp::router]
 ```
 
@@ -83,9 +83,8 @@ The content store uses
 content partitioning aligned. Site-to-tenant mapping is trusted configuration,
 never a request parameter. Use separate keys/tenants for unrelated sites.
 
-`web-user::mount` accepts `-store`, `-prefix` (default `/user`, non-root),
-`-config`, and a legacy `-deliver` command prefix. Put `prefix` and `deliver` in
-`-config` for new integrations. Its returned mount dictionary
+`web-user::mount` accepts `-store` and `-config`. Put `prefix` (default `/user`,
+non-root) and `deliver` in `-config`. Its returned mount dictionary
 is passed to `current_user`, `authorize`, and `csrf`. It validates settings,
 templates, origin and route collisions before registration. Prefixes must not
 overlap other packages or prior catch-all routes.
@@ -101,12 +100,13 @@ per mount and do not modify package defaults. The example loads site and per-pac
 ## Store configuration
 
 Pass a trusted dictionary to `create -connection $connection -config $account`.
-Required fields are `tenant`, `aead`, and `mac` (registered key handles owned by
-the worker). Legacy `-tenant`, `-aead`, and `-mac` options remain supported.
+Required fields are `tenant`, `aead`, `mac` (registered key handles owned by
+the worker), and `email_hash_salt`. All store properties belong in `-config`.
 All policy values are validated and captured in the store:
 
 | Property | Default | Meaning |
 | --- | --- | --- |
+| `email_hash_salt` | Required | Persistent site-specific salt included in the keyed email lookup digest. Blank values are rejected by `create`. |
 | `bcrypt_cost`, `password_min_length` | 12, 15 | New hashes and minimum characters; bcrypt's 72-byte cap always applies. |
 | `collect_names` | false | Require first/last names at registration and enable the authenticated profile-edit form. |
 | `totp_digits`, `totp_period`, `totp_algorithm` | 6, 30, SHA1 | Shared by key URI, verification and LOCAL display. |
@@ -118,6 +118,14 @@ All policy values are validated and captured in the store:
 
 `password_min_length` accepts 6–72 characters; web-user defaults to 15.
 The host chooses its policy through the account config dictionary.
+
+Generate the salt once with `openssl rand -hex 32`, store it in private host
+configuration, and reuse it across workers and restarts. In tconfig INI, set
+`[account] email_hash_salt`; encrypted deployments can use `enc:email_hash_salt`.
+The salt is included in the Tink MAC input along with the normalized email;
+tenant and purpose are also bound. Email and names remain AEAD-encrypted.
+There is no unsalted lookup fallback or migration. Use a fresh account database
+for this release; changing the salt or MAC key invalidates existing email lookups.
 
 Use the same policy for all workers serving a tenant. Changing TOTP digits,
 period or algorithm requires existing authenticators to be enrolled again;

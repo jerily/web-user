@@ -20,7 +20,7 @@ proc ::authtest::setup {{mode LOCAL} {policy {}} {mount {}}} {
     }
     ::web::user::initdb $db
     set handles [list [::tink::register_keyset [::tink::aead::create_keyset AES256_GCM]] [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]]
-    set store [::web::user::create -connection $db -config [dict merge [dict create tenant test-[pid]-[incr serial] aead [lindex $handles 0] mac [lindex $handles 1]] $policy]]
+    set store [::web::user::create -connection $db -config [dict merge [dict create tenant test-[pid]-[incr serial] aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt test-email-salt] $policy]]
     set router [::tpathexp::router]
     set config [::web::user::mount $router -store $store -config [dict merge {origin https://community.test deliver ::authtest::delivery} $mount]]
     set ::authtest::delivered {}
@@ -225,10 +225,10 @@ test auth-11 {bcrypt input boundaries and unmodified Tink API} -setup {::authtes
         [info commands ::tink::password::*] [info commands ::tink::random_bytes] \
         [info commands ::tink::constant_time_equal] [package provide tink]
 } -cleanup {::authtest::cleanup} -result {1 1 1 0 1 {} {} {} 20240704.0.2}
-test auth-12 {obsolete password hash fails closed and can be replaced by email recovery} -setup {::authtest::setup} -body {
+test auth-12 {invalid password hash fails closed and can be replaced by email recovery} -setup {::authtest::setup} -body {
     ::authtest::register
     set user [lindex [::web::user::rows $::authtest::store web_user_users] 0]
-    ::web::user::update $::authtest::store web_user_users [dict create id [dict get $user id]] {password {scrypt$obsolete-record}}
+    ::web::user::update $::authtest::store web_user_users [dict create id [dict get $user id]] {password invalid-record}
     set result [list [::authtest::login]]
     ::authtest::call POST /user/forgot {email person@example.com}
     lappend result [::authtest::call POST /user/reset [dict create code [lindex $::authtest::delivered 2] password $::authtest::password]]
@@ -475,4 +475,71 @@ test auth-25 {retry registration updates pending names but cannot replace a veri
     ::authtest::login
     list [dict get [::authtest::me] first_name] [dict get [::authtest::me] last_name]
 } -cleanup {::authtest::cleanup} -result {Mira Fern}
+test auth-26 {email hash salt is required before accepting a store} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+} -body {
+    set policy [dict get $::authtest::store -config]
+    set result {}
+    foreach candidate [list [dict remove $policy email_hash_salt] \
+        [dict replace $policy email_hash_salt {}] [dict replace $policy email_hash_salt {   }]] {
+        lappend result [catch {::web::user::create -connection $::authtest::db -config $candidate} message] $message
+    }
+    set result
+} -cleanup {::authtest::cleanup} -result {1 {email_hash_salt is required} 1 {email_hash_salt is required} 1 {email_hash_salt is required}}
+
+test auth-27 {email lookup normalizes addresses and binds the digest to salt, tenant and MAC key} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5 collect_names true}
+} -body {
+    ::authtest::register_named
+    ::authtest::login
+    set store $::authtest::store
+    set current [::authtest::me]
+    set row [::web::user::user_by_email $store {  PERSON@Example.COM  }]
+    set key [dict get $row email_key]
+    set result [list [expr {[dict get $row id] eq [dict get $current id]}] \
+        [expr {$key eq [::web::user::email_key $store person@example.com]}] \
+        [regexp {^[0-9a-f]+$} $key] \
+        [expr {[dict get $row email] ne [dict get $current email]}]]
+    # Recreating the store with persistent configuration preserves its lookup.
+    set reopened [::web::user::create -connection $::authtest::db -config [dict get $store -config]]
+    lappend result [expr {[::web::user::user_by_email $reopened person@example.com] eq $row}]
+    set changed $store
+    dict set changed -config email_hash_salt different-site-salt
+    lappend result [expr {[::web::user::email_key $changed person@example.com] ne $key}] \
+        [expr {[::web::user::user_by_email $changed person@example.com] eq {}}]
+    set changed $store
+    dict set changed -tenant different-tenant
+    lappend result [expr {[::web::user::email_key $changed person@example.com] ne $key}] \
+        [expr {[::web::user::user_by_email $changed person@example.com] eq {}}]
+    set handle [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]
+    lappend ::authtest::handles $handle
+    set changed $store
+    dict set changed -mac $handle
+    lappend result [expr {[::web::user::email_key $changed person@example.com] ne $key}]
+    # AEAD rejects email moved to another account; profile field binding is in auth-22.
+    lappend result [catch {::web::user::unseal $store [dict get $row email] {email another-user}}]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 1 1 1 1 1 1 1 1}
+
+test auth-28 {registration, login and recovery share the salted email lookup} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+} -body {
+    ::authtest::register
+    set store $::authtest::store
+    set original [::web::user::user_by_email $store person@example.com]
+    set fields [dict create email {  PERSON@Example.COM  } password $::authtest::password]
+    set result [list [::authtest::call POST /user/register $fields] \
+        [llength [::web::user::rows $store web_user_users]]]
+    ::authtest::call GET /user/login
+    lappend result [::authtest::call POST /user/login $fields]
+    lappend result [expr {[dict get [::authtest::me] id] eq [dict get $original id]}]
+    lappend result [::authtest::call POST /user/forgot {email {  PERSON@Example.COM  }}] \
+        [lrange $::authtest::delivered 0 1]
+    # No fallback scan or plaintext lookup if the indexed digest does not match.
+    ::web::user::update $store web_user_users [dict create id [dict get $original id]] {email_key unavailable}
+    set ::authtest::delivered {}
+    lappend result [::authtest::call POST /user/login $fields] \
+        [::authtest::call POST /user/forgot {email person@example.com}] $::authtest::delivered
+    set result
+} -cleanup {::authtest::cleanup} -result {200 1 200 1 200 {reset person@example.com} 401 200 {}}
 cleanupTests

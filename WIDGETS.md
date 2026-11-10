@@ -96,8 +96,8 @@ requires CSRF validation and passes the normal account rate limits. Updated
 names appear on existing forum posts because widgets resolve the current profile.
 
 Names are encrypted with the account's Tink AEAD key in `web_user_profiles`,
-bound to the tenant, user ID and field. Run `::web::user::initdb` before serving the
-new version: it adds this table without changing existing accounts. LOCAL
-example-community initializes it automatically; for PROD run the normal explicit
-`--initdb true` maintenance step before starting workers. Existing accounts keep
-their IDs, passwords, sessions and posts and use `Member` until names are saved.
+bound to the tenant, user ID and field. Run `::web::user::initdb` before serving.
+LOCAL example-community initializes the schema automatically; for PROD run the
+explicit `--initdb true` maintenance step before starting workers. Members without
+names use `Member` until names are saved. See [MOUNTING.md](MOUNTING.md#store-configuration)
+for the required email salt and current storage format.

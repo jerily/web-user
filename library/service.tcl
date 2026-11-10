@@ -5,7 +5,7 @@ proc ::web::user::action_register {config row fields} {
     set names [name_fields $store $fields]
     set address [email [dict get $fields email]]
     set hash [password_hash [dict get $fields password] [dict get $store -config]]
-    set emailKey [tag $store $address email]
+    set emailKey [email_key $store $address]
     set user [one $store web_user_users [dict create email_key $emailKey]]
     set code [verification_code]
     set uid {}
@@ -50,7 +50,7 @@ proc ::web::user::action_login {config row fields} {
     set store [dict get $config -store]
     set result [dict create message {} debug_code {} delivery {}]
     set address [email [dict get $fields email]]
-    set user [one $store web_user_users [dict create email_key [tag $store $address email]]]
+    set user [user_by_email $store $address]
     if {$user eq {}} {
         # Match a normal password verification's work for an unknown address.
         ::bcrypt::hashpw [random_token] [::bcrypt::gensalt [property $store bcrypt_cost]]
@@ -68,7 +68,7 @@ proc ::web::user::action_forgot {config row fields} {
     set store [dict get $config -store]
     set result [dict create message {} debug_code {} delivery {}]
     set address [email [dict get $fields email]]
-    set user [one $store web_user_users [dict create email_key [tag $store $address email]]]
+    set user [user_by_email $store $address]
     set code [verification_code]
     set uid {}
     if {$user ne {} && [dict get $user verified]} {

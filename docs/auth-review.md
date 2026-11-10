@@ -9,7 +9,8 @@ pending session never grants an authenticated identity.
 | Password handling | Preserve password text; require at least 15 characters and at most 72 UTF-8 bytes; reject NUL; use bcrypt at cost 12. |
 | Session credentials | Generate 32 random bytes with twebserver; store tenant/purpose-bound Tink MAC digests. |
 | Email confirmation and reset codes | Generate six uniformly random digits with twebserver; store session-bound Tink MAC digests and enforce expiry and attempt limits. |
-| Sensitive account fields | Encrypt email and authenticator secrets with Tink AEAD and bound associated data. |
+| Sensitive account fields | Encrypt email, first/last names and authenticator secrets with Tink AEAD and tenant/user/field-bound associated data. |
+| Email lookup | Require persistent `email_hash_salt`; MAC the salt and normalized email with tenant/purpose binding; query the unique `(tenant, email_key)` index. No unsalted fallback. |
 | Concurrent account changes | Use transactions, checked challenge consumption and user revision checks. |
 | Authenticator replay | Persist the last accepted TOTP step and reject reuse across sessions. |
 | Password recovery | Consume the code once, revoke account sessions and preserve existing MFA. |

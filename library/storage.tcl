@@ -46,13 +46,12 @@ proc ::web::user::initdb {connection} {
     }
 }
 proc ::web::user::create {args} {
-    set config [options {-connection {} -config {} -tenant {} -aead {} -mac {}} {*}$args]
+    set config [options {-connection {} -config {}} {*}$args]
     set settings [settings [dict get $config -config]]
-    # Retain the original options for callers; new hosts supply a config dictionary.
     foreach key {tenant aead mac} {
-        if {[dict get $config -$key] ne {}} {dict set settings $key [dict get $config -$key]}
         dict set config -$key [dict get $settings $key]
     }
+    if {[string trim [dict get $settings email_hash_salt]] eq {}} {error "email_hash_salt is required"}
     dict set config -config $settings
     foreach key {-connection -tenant -aead -mac} {if {[dict get $config $key] eq {}} {error "$key is required"}}
     dict set config -env [environment]
@@ -82,6 +81,9 @@ proc ::web::user::remove {store table where} {
     dict get [db_execute [dict get $store -connection] [db_where [db_delete $table] [predicate $store $where]]] rowcount
 }
 proc ::web::user::user_by_id {store id} {one $store web_user_users [dict create id $id]}
+proc ::web::user::user_by_email {store address} {
+    one $store web_user_users [dict create email_key [email_key $store $address]]
+}
 # CAS serializes changes for a user across workers without dialect-specific SQL.
 proc ::web::user::save_user {store user changes} {
     dict set changes revision [expr {[dict get $user revision] + 1}]
