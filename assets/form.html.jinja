@@ -15,7 +15,7 @@
 <label>Email <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
 {% endif %}
 {% if view == "register" or view == "reset" %}
-<label>New password <input name="password" type="password" autocomplete="new-password" minlength="15" required></label><p>Use at least 15 characters and at most 72 UTF-8 bytes.</p>
+<label>New password <input name="password" type="password" autocomplete="new-password" minlength="{{ password_min_length }}" required></label><p>Use at least {{ password_min_length }} characters and at most 72 UTF-8 bytes.</p>
 {% endif %}
 {% if view == "login" or view == "two-factor/disable" %}
 <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
@@ -25,9 +25,9 @@
 {% endif %}
 {% if view == "two-factor/setup" %}
 {% if qr %}
-<p>Scan this QR code with your authenticator app, then enter its current six digit code.</p>
+<p>Scan this QR code with your authenticator app, then enter its current {{ totp_digits }} digit code.</p>
 <div class="qr">{{ qr | safe }}</div><p>Manual setup key: <code>{{ secret }}</code></p>
-<input name="operation" type="hidden" value="confirm"><label>Authenticator code <input name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required></label>
+<input name="operation" type="hidden" value="confirm"><label>Authenticator code <input name="code" inputmode="numeric" pattern="[0-9]{{ '{' }}{{ totp_digits }}{{ '}' }}" autocomplete="one-time-code" required></label>
 {% else %}
 <p>Confirm your password to set up an authenticator.</p><input name="operation" type="hidden" value="begin"><label>Password <input name="password" type="password" autocomplete="current-password" required></label>
 {% endif %}

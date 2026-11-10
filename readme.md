@@ -1,24 +1,23 @@
-# web-user (private)
+# web-user
 
 Email/password accounts mounted on a `tpathexp` site router. OAuth is outside this
 package. Uses `tpersist`/TDBC, `tink-tcl`, `tmfa`, `tqrcodegen`, `ksuid-tcl`,
 `jinja2-tcl`, `tjson`, `bcrypt-tcl`, and `twebserver`. The package owns its routes, templates, account records,
 sessions and CSRF; the host owns configuration, connections, crypto keysets and
 HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contract
-and [docs/auth-review.md](docs/auth-review.md) for the marketplace review.
+and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.1.1
+package require web-user 0.1.2
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
     postgresql [dict create -host db -database community -user community]]]
 ::web::user::initdb $connection ;# explicit maintenance; before workers start
-set store [::web::user::create -connection $connection -tenant example \
-    -aead $aeadHandle -mac $macHandle]
+set store [::web::user::create -connection $connection -config [dict create tenant example \
+    aead $aeadHandle mac $macHandle]]
 set router [::tpathexp::router]
-set accounts [::web::user::mount $router -store $store -prefix /user \
-    -config [dict create origin https://community.example issuer Community \
+set accounts [::web::user::mount $router -store $store -config [dict create prefix /user origin https://community.example issuer Community \
         title Account master_template $siteMaster]]
 ```
 
@@ -30,7 +29,13 @@ The host must supply an autocommit connection (`-autobegin 0`) when using `creat
 directly. A host borrowing a connection is responsible for selecting the same
 backend policy. Schema changes never happen in `mount` or request handlers.
 
+Requires Tcl 9.1 or newer. Dependency minimums include tpersist 0.1.1,
+Jinja 0.1.1, tjson 1.0.27, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.56.
+
 ## Flows
+
+The lifetimes, password and TOTP policy below are defaults. Configure them in
+`create -config`; see [MOUNTING.md](MOUNTING.md).
 
 - Register with email and a password of at least 15 characters (up to 72 UTF-8
   bytes), then verify the email code before logging in. Email normalization trims
@@ -50,7 +55,7 @@ backend policy. Schema changes never happen in `mount` or request handlers.
 - Logout is POST with CSRF and deletes the server session. Auth sessions expire
   after 12 hours; anonymous/MFA/setup sessions after 10 minutes.
 
-Email delivery is intentionally a TODO. `-deliver commandPrefix` optionally
+Email delivery is intentionally a TODO. `deliver` config command prefix optionally
 receives `purpose email code` (purpose `verify` or `reset`) after commit. The
 default sends nothing. Wire delivery before using registration/recovery in PROD;
 errors in the callback propagate to the host. Reset codes must be entered in the
@@ -94,17 +99,23 @@ members to edit its shared wiki/blog, using those packages' existing callbacks.
 
 ## Development
 
-Install via the private registry and public dependency fallback:
+Install the package and its native dependencies through ttrek:
 
 ```sh
-ttrek install -y -registry /path/to/private-ttrek-registry -add-pubreg web-user
+ttrek install -y web-user
 ```
 
-The integration uses unmodified `tink-tcl` 20240704.0.2, `bcrypt-tcl` 2.0.1,
+From a source checkout with native dependencies installed, add the checkout to
+`TCLLIBPATH` or install the pure Tcl package with CMake:
+
+```sh
+cmake -S . -B build -DBUILD_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/path/to/prefix
+cmake --install build
+```
+
+The package uses unmodified `tink-tcl` 20240704.0.2, `bcrypt-tcl` 2.0.1,
 `tmfa` 1.1.2, `tsession` 1.0.4, and `twebserver` for cryptographic random bytes.
-Public dependency releases/recipes must be published before installing 0.1.1
-from the registry; local source checkouts can be used during development.
-The 0.1.0 recipes remain historical and depend on a withdrawn support build.
+Keep persistent keysets and databases outside the source and install directories.
 
 Existing 0.1.0 scrypt password records cannot be converted without a password.
 Users must complete password recovery to replace them with bcrypt records.

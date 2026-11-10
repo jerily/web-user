@@ -45,7 +45,14 @@ proc ::web::user::initdb {connection} {
     }
 }
 proc ::web::user::create {args} {
-    set c [options {-connection {} -tenant {} -aead {} -mac {}} {*}$args]
+    set c [options {-connection {} -config {} -tenant {} -aead {} -mac {}} {*}$args]
+    set settings [settings [dict get $c -config]]
+    # Retain the original options for callers; new hosts supply a config dictionary.
+    foreach key {tenant aead mac} {
+        if {[dict get $c -$key] ne {}} {dict set settings $key [dict get $c -$key]}
+        dict set c -$key [dict get $settings $key]
+    }
+    dict set c -config $settings
     foreach key {-connection -tenant -aead -mac} {if {[dict get $c $key] eq {}} {error "$key is required"}}
     dict set c -env [environment]
     # Validate both key handles before accepting any requests.
