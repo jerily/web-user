@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(web-user VERSION 0.1.2 LANGUAGES NONE)
+project(web-user VERSION 0.1.3 LANGUAGES NONE)
 set(PACKAGE_DIR "lib/web-user${PROJECT_VERSION}")
 install(FILES pkgIndex.tcl readme.md LICENSE DESTINATION "${PACKAGE_DIR}")
 install(DIRECTORY library assets DESTINATION "${PACKAGE_DIR}")

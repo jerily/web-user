@@ -272,4 +272,18 @@ test auth-15 {OpenAPI rejects missing, short and undeclared form fields without 
     lappend result [llength [::web::user::rows $::authtest::store web_user_users]]
     set result
 } -cleanup {::authtest::cleanup} -result {400 400 400 1 0}
+
+test auth-16 {browser forms preserve configured origin without weakening CSRF verification} -setup {
+    ::authtest::setup LOCAL {} {origin https://garden.example:8443}
+} -body {
+    ::authtest::call GET /user/register
+    set result [list [dict get $::authtest::last headers referrer-policy]]
+    set fields [dict create email person@example.com password $::authtest::password]
+    foreach origin {null https://evil.test https://community.test} {
+        lappend result [::authtest::call POST /user/register $fields [dict create origin $origin]]
+    }
+    lappend result [::authtest::call POST /user/register [dict merge $fields {csrf invalid}] {origin https://garden.example:8443}]
+    lappend result [::authtest::call POST /user/register $fields {origin https://garden.example:8443}]
+    set result
+} -cleanup {::authtest::cleanup} -result {same-origin 403 403 403 403 200}
 cleanupTests
