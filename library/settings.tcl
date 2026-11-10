@@ -10,7 +10,7 @@ proc ::web::user::settings {config} {
         form_max_bytes 32768
     } {*}$config]
     foreach {key minimum maximum} {
-        bcrypt_cost 4 16 password_min_length 15 72
+        bcrypt_cost 4 16 password_min_length 6 72
         totp_period 1 120 totp_window 0 2
         session_ttl 1 2592000 code_ttl 1 86400 challenge_ttl 1 86400
         throttle_window 1 86400 browse_limit 1 100000 post_limit 1 100000

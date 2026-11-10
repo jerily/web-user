@@ -28,7 +28,7 @@ Set `ENV` to exactly `LOCAL` or `PROD` before loading the host configuration.
 schema explicitly before workers serve requests:
 
 ```tcl
-package require web-user 0.1.2
+package require web-user 0.1.3
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/accounts.sqlite3 \
     postgresql [dict create -host db -database accounts -user accounts]]]
@@ -116,6 +116,9 @@ All policy values are validated and captured in the store:
 | `browse_limit`, `post_limit`, `account_limit`, `challenge_limit` | 120, 60, 10, 5 | Maximum attempts in that window. |
 | `form_max_bytes` | 32768 | Maximum encoded form size. |
 
+`password_min_length` accepts 6–72 characters; web-user defaults to 15.
+The host chooses its policy through the account config dictionary.
+
 Use the same policy for all workers serving a tenant. Changing TOTP digits,
 period or algorithm requires existing authenticators to be enrolled again;
 the app stores the provisioning parameters. Issuer is validated directly at
@@ -140,6 +143,10 @@ cryptographic randomness; there is no shared secret or development key in code.
 
 Each endpoint is registered individually in `mount` with its own handler.
 Shared helpers enforce session, CSRF, rate-limit and transaction rules.
+
+Form pages use `Referrer-Policy: same-origin` so browser submissions retain
+an `Origin` header for comparison with the configured site origin. Null and
+foreign origins remain rejected, as do invalid session-bound CSRF tokens.
 
 POST accepts URL-encoded forms and a `csrf` field. Required fields: registration
 and login `email password`; forgot `email`; verify/MFA `code`; reset `code password`;

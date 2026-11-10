@@ -1,7 +1,9 @@
 proc ::web::user::fail {status message} {return -code error -errorcode [list WEB USER $status] $message}
 proc ::web::user::response {status body {type {text/html; charset=utf-8}}} {
+    # no-referrer makes browsers send Origin: null on form POSTs, which fails
+    # our origin check. same-origin preserves it without sending external referrers.
     dict create statusCode $status body $body headers [dict create content-type $type \
-        cache-control no-store x-content-type-options nosniff referrer-policy no-referrer \
+        cache-control no-store x-content-type-options nosniff referrer-policy same-origin \
         content-security-policy {default-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'}]
 }
 proc ::web::user::header {request name} {
