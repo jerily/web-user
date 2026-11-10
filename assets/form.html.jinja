@@ -1,0 +1,40 @@
+{% extends "page.html.jinja" %}
+{% block body %}
+<section class="account-panel">
+<h1>{{ title }}</h1>
+{% if message %}<p role="status">{{ message }}</p>{% endif %}
+{% if debug_code %}<aside class="local-code"><strong>LOCAL development code</strong><code id="local-code">{{ debug_code }}</code></aside>{% endif %}
+{% if view == "account" %}
+<p>Signed in as {{ email }}</p>
+{% if mfa_enabled %}<p>Authenticator enabled.</p><a href="{{ prefix }}/two-factor/disable">Disable authenticator</a>{% else %}<p>Add an authenticator app to protect your account.</p><a href="{{ prefix }}/two-factor/setup">Set up authenticator</a>{% endif %}
+<form method="post" action="{{ prefix }}/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Sign out</button></form>
+{% else %}
+<form method="post" action="{{ prefix }}/{{ view }}">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{% if view == "register" or view == "login" or view == "forgot" %}
+<label>Email <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+{% endif %}
+{% if view == "register" or view == "reset" %}
+<label>New password <input name="password" type="password" autocomplete="new-password" minlength="15" required></label><p>Use at least 15 characters.</p>
+{% endif %}
+{% if view == "login" or view == "two-factor/disable" %}
+<label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+{% endif %}
+{% if view == "verify" or view == "reset" or view == "two-factor" or view == "two-factor/disable" %}
+<label>Code <input name="code" autocomplete="one-time-code" required></label>
+{% endif %}
+{% if view == "two-factor/setup" %}
+{% if qr %}
+<p>Scan this QR code with your authenticator app, then enter its current six digit code.</p>
+<div class="qr">{{ qr | safe }}</div><p>Manual setup key: <code>{{ secret }}</code></p>
+<input name="operation" type="hidden" value="confirm"><label>Authenticator code <input name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required></label>
+{% else %}
+<p>Confirm your password to set up an authenticator.</p><input name="operation" type="hidden" value="begin"><label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+{% endif %}
+{% endif %}
+<button type="submit">Continue</button>
+</form>
+{% if view == "login" %}<p><a href="{{ prefix }}/forgot">Forgot password?</a> · <a href="{{ prefix }}/register">Create an account</a></p>{% endif %}
+{% endif %}
+</section>
+{% endblock %}

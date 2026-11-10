@@ -1,0 +1,205 @@
+package require tcltest
+package require web-user
+namespace import ::tcltest::*
+namespace eval ::authtest {variable password {a long testing password}; variable serial 0}
+proc ::authtest::setup {{mode LOCAL}} {
+    variable serial
+    variable db
+    variable store
+    variable router
+    variable config
+    variable cookie {}
+    variable csrf {}
+    variable last {}
+    variable handles
+    set ::env(ENV) $mode
+    set db [::tpersist::db_connect -database :memory: -autobegin 0]
+    if {[info exists ::env(WEB_USER_TEST_PG)]} {
+        ::tpersist::db_disconnect $db
+        set db [::tpersist::db_connect -dialect postgresql -autobegin 0 {*}$::env(WEB_USER_TEST_PG)]
+    }
+    ::web::user::initdb $db
+    set handles [list [::tink::register_keyset [::tink::aead::create_keyset AES256_GCM]] [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]]
+    set store [::web::user::create -connection $db -tenant test-[pid]-[incr serial] -aead [lindex $handles 0] -mac [lindex $handles 1]]
+    set router [::tpathexp::router]
+    set config [::web::user::mount $router -store $store -config {origin https://community.test} -deliver ::authtest::delivery]
+    set ::authtest::delivered {}
+    set ::authtest::csrf {}
+    set ::authtest::cookie {}
+}
+proc ::authtest::delivery {purpose address code} {set ::authtest::delivered [list $purpose $address $code]}
+proc ::authtest::cleanup {} {
+    $::authtest::router destroy
+    ::tpersist::db_disconnect $::authtest::db
+    foreach h $::authtest::handles {::tink::unregister_keyset $h}
+}
+proc ::authtest::call {method path {fields {}} {extraHeaders {}}} {
+    variable cookie
+    variable csrf
+    variable last
+    set headers [dict merge [dict create cookie $cookie] $extraHeaders]
+    set req [dict create method $method path $path headers $headers]
+    if {$method eq "POST"} {
+        if {![dict exists $fields csrf]} {dict set fields csrf $csrf}
+        set pairs {}
+        dict for {k v} $fields {lappend pairs [::tmfa::_uri_component $k]=[::tmfa::_uri_component $v]}
+        dict set req body [join $pairs &]
+        dict set req headers content-type application/x-www-form-urlencoded
+    }
+    set last [$::authtest::router dispatch $req {addr 127.0.0.1}]
+    if {[dict exists $last headers set-cookie]} {set cookie [lindex [split [dict get $last headers set-cookie] {;}] 0]}
+    if {[regexp {name="csrf" value="([^"]+)"} [dict get $last body] -> next]} {set csrf $next}
+    return [dict get $last statusCode]
+}
+proc ::authtest::register {} {
+    variable password
+    call GET /user/register
+    if {[call POST /user/register [dict create email Person@example.com password $password]] != 200} {error $::authtest::last}
+    set code [lindex $::authtest::delivered 2]
+    if {[call POST /user/verify [dict create code $code]] != 200} {error $::authtest::last}
+    return $code
+}
+proc ::authtest::login {} {
+    call GET /user/login
+    call POST /user/login [dict create email person@example.com password $::authtest::password]
+}
+proc ::authtest::me {} {::web::user::current_user $::authtest::config [dict create headers [dict create cookie $::authtest::cookie]]}
+proc ::authtest::setup_mfa {} {
+    call POST /user/two-factor/setup [dict create operation begin password $::authtest::password]
+    set row [::web::user::session $::authtest::store [lindex [split $::authtest::cookie =] 1]]
+    set secret [::web::user::unseal $::authtest::store [dict get $row pending_secret] [list mfa [dict get $row uid]]]
+    set status [call POST /user/two-factor/setup [dict create operation confirm code [::tmfa::get_totp $secret 6 30 SHA1]]]
+    if {$status != 200} {error $::authtest::last}
+    return $secret
+}
+test auth-1 {register verifies email, KSUID id, login rotates and logout revokes} -setup {::authtest::setup} -body {
+    ::authtest::register
+    set old $::authtest::cookie
+    set login [::authtest::login]
+    set user [::authtest::me]
+    set uid [dict get $user id]
+    set stored [::web::user::user_by_id $::authtest::store $uid]
+    set result [list $login [dict get $user email] [regexp {^[A-Za-z0-9]{27}$} $uid] [expr {$old ne $::authtest::cookie}] \
+        [expr {[dict get $stored email] ne "person@example.com"}] [string match {scrypt$*} [dict get $stored password]]]
+    set token [lindex [split $::authtest::cookie =] 1]
+    lappend result [::authtest::call POST /user/logout] [expr {[::web::user::session $::authtest::store $token] eq {}}]
+    set result
+} -cleanup {::authtest::cleanup} -result {200 person@example.com 1 1 1 1 200 1}
+test auth-2 {CSRF, origin, malformed form, expiry, and reset-only sessions} -setup {::authtest::setup} -body {
+    ::authtest::register
+    set result [list [::authtest::call POST /user/login {email person@example.com password nope csrf invalid}]]
+    lappend result [::authtest::call POST /user/login {email person@example.com password nope} {origin https://evil.test}]
+    ::authtest::call POST /user/forgot {email person@example.com}
+    lappend result [expr {[::authtest::me] eq {}}] [::authtest::call GET /user]
+    set row [::web::user::session $::authtest::store [lindex [split $::authtest::cookie =] 1]]
+    ::web::user::update $::authtest::store web_user_sessions [dict create id [dict get $row id]] {expires 0}
+    lappend result [::authtest::call POST /user/reset [dict create code [lindex $::authtest::delivered 2] password $::authtest::password]]
+    set result
+} -cleanup {::authtest::cleanup} -result {403 403 1 401 403}
+test auth-3 {reset code once only, sessions revoked, password whitespace preserved} -setup {::authtest::setup} -body {
+    ::authtest::register
+    ::authtest::login
+    set oldToken [lindex [split $::authtest::cookie =] 1]
+    ::authtest::call POST /user/forgot {email person@example.com}
+    set resetToken [lindex [split $::authtest::cookie =] 1]
+    set code [lindex $::authtest::delivered 2]
+    set new {  a different long password  }
+    set result [list [::authtest::call POST /user/reset [dict create code $code password $new]]]
+    lappend result [expr {[::web::user::session $::authtest::store $oldToken] eq {}}] [expr {[::web::user::session $::authtest::store $resetToken] eq {}}]
+    lappend result [::authtest::call POST /user/reset [dict create code $code password $new]]
+    lappend result [::authtest::call POST /user/login [dict create email person@example.com password [string trim $new]]]
+    lappend result [::authtest::call POST /user/login [dict create email person@example.com password $new]]
+    set result
+} -cleanup {::authtest::cleanup} -result {200 1 1 400 401 200}
+test auth-4 {2FA enrollment, pending principal, OTP replay and disable} -setup {::authtest::setup} -body {
+    ::authtest::register
+    ::authtest::login
+    set uid [dict get [::authtest::me] id]
+    set secret [::authtest::setup_mfa]
+    set result [list [dict get [::authtest::me] mfa_enabled]]
+    ::authtest::call POST /user/logout
+    ::authtest::login
+    lappend result [expr {[::authtest::me] eq {}}]
+    # The enrollment code cannot be reused to authenticate.
+    lappend result [::authtest::call POST /user/two-factor [dict create code [::tmfa::get_totp $secret 6 30 SHA1]]]
+    # Simulate a subsequent accepted time window without sleeping.
+    ::web::user::update $::authtest::store web_user_users [dict create id $uid] {last_step -1}
+    lappend result [::authtest::call POST /user/two-factor [dict create code [::tmfa::get_totp $secret 6 30 SHA1]]]
+    lappend result [dict get [::authtest::me] mfa_enabled]
+    ::web::user::update $::authtest::store web_user_users [dict create id $uid] {last_step -1}
+    lappend result [::authtest::call POST /user/two-factor/disable [dict create password $::authtest::password code [::tmfa::get_totp $secret 6 30 SHA1]]]
+    lappend result [dict get [::authtest::me] mfa_enabled]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 401 200 1 200 0}
+test auth-5 {PROD never exposes codes, cookie is Secure, anonymous reset has same response} -setup {::authtest::setup PROD} -body {
+    ::authtest::register
+    ::authtest::call POST /user/forgot {email person@example.com}
+    set known [dict get $::authtest::last body]
+    set cookie [dict get $::authtest::last headers set-cookie]
+    set code [lindex $::authtest::delivered 2]
+    set result [list [expr {[string first $code $known] < 0}] [expr {[string first local-code $known] < 0}] \
+        [string match {*; Secure} $cookie] [string match {__Host-*} $cookie]]
+    ::authtest::call POST /user/forgot {email unknown@example.com}
+    set unknown [dict get $::authtest::last body]
+    regsub -all {name="csrf" value="[^"]+"} $known {CSRF} known
+    regsub -all {name="csrf" value="[^"]+"} $unknown {CSRF} unknown
+    lappend result [expr {$known eq $unknown}]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 1 1}
+test auth-6 {challenge attempt limits persist despite rejected transactions} -setup {::authtest::setup} -body {
+    ::authtest::register
+    ::authtest::call POST /user/forgot {email person@example.com}
+    set result {}
+    for {set i 0} {$i < 6} {incr i} {lappend result [::authtest::call POST /user/reset [dict create code invalid password $::authtest::password]]}
+    set result
+} -cleanup {::authtest::cleanup} -result {400 400 400 400 400 429}
+test auth-7 {invalid configuration fails before routing, tenant and purpose isolation} -setup {::authtest::setup} -body {
+    set store $::authtest::store
+    set other $store
+    dict set other -tenant other
+    set encrypted [::web::user::seal $store text mfa]
+    set r [::tpathexp::router]
+    set result [list [catch {::web::user::unseal $other $encrypted mfa}] [catch {::web::user::unseal $store $encrypted email}] \
+        [catch {::web::user::mount $r -store $store -config {origin https://community.test typo 1}}] [dict get [$r match GET /user] statusCode]]
+    $r destroy
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 404}
+test auth-8 {retry pending registration invalidates old code and password; duplicate verified address stays unchanged} -setup {::authtest::setup} -body {
+    ::authtest::call GET /user/register
+    ::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]
+    set old [lindex $::authtest::delivered 2]
+    set replacement {replacement pending password}
+    ::authtest::call POST /user/register [dict create email person@example.com password $replacement]
+    set code [lindex $::authtest::delivered 2]
+    set result [list [::authtest::call POST /user/verify [dict create code $old]] [::authtest::call POST /user/verify [dict create code $code]]]
+    lappend result [::authtest::call POST /user/login [dict create email person@example.com password $::authtest::password]]
+    lappend result [::authtest::call POST /user/login [dict create email person@example.com password $replacement]]
+    ::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]
+    ::authtest::call GET /user/login
+    lappend result [::authtest::call POST /user/login [dict create email person@example.com password $replacement]]
+    set result
+} -cleanup {::authtest::cleanup} -result {400 200 401 200 200}
+test auth-9 {reset preserves MFA, QR onboarding and LOCAL codes} -setup {::authtest::setup} -body {
+    ::authtest::register
+    ::authtest::login
+    set secret [::authtest::setup_mfa]
+    ::authtest::call POST /user/forgot {email person@example.com}
+    set result [list [expr {[string first {id="local-code"} [dict get $::authtest::last body]] >= 0}]]
+    ::authtest::call POST /user/reset [dict create code [lindex $::authtest::delivered 2] password $::authtest::password]
+    lappend result [::authtest::login] [expr {[::authtest::me] eq {}}]
+    lappend result [expr {[string first {id="local-code"} [dict get $::authtest::last body]] >= 0}]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 200 1 1}
+test auth-10 {form parsing rejects duplicates and invalid UTF-8, accepts Lambda bodies} -body {
+    set req {headers {content-type application/x-www-form-urlencoded}}
+    set result {}
+    foreach body {a=1&a=2 a=%FF a=%00 a=%ZZ} {
+        dict set req body $body
+        lappend result [catch {::web::user::form $req}]
+    }
+    dict set req body [binary encode base64 {code=abc&password=with+spaces}]
+    dict set req isBase64Encoded true
+    lappend result [::web::user::form $req]
+    set result
+} -result {1 1 1 1 {code abc password {with spaces}}}
+cleanupTests
