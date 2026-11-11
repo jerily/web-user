@@ -43,6 +43,7 @@ proc ::web::user::initdb {connection} {
         }
         db_create_table $connection $definition -if_not_exists 1
     }
+    db_create_index $connection web_user_limits_expiry web_user_limits {tenant expires} -if_not_exists 1
 }
 proc ::web::user::create {args} {
     set config [options {-connection {} -config {}} {*}$args]

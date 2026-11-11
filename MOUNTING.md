@@ -28,7 +28,7 @@ Set `ENV` to exactly `LOCAL` or `PROD` before loading the host configuration.
 schema explicitly before workers serve requests:
 
 ```tcl
-package require web-user 0.2.0
+package require web-user 0.2.1
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/accounts.sqlite3 \
     postgresql [dict create -host db -database accounts -user accounts]]]
