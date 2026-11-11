@@ -1,6 +1,6 @@
 proc ::web::user::session_backend {} {
     set backend [expr {[environment] eq "LOCAL" ? "sqlite" : "postgres"}]
-    package require tsession-$backend 1.0.0
+    package require tsession-$backend 1.0.1
     return ::tsession::$backend
 }
 proc ::web::user::session {store token} {

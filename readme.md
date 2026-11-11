@@ -8,7 +8,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.2.0
+package require web-user 0.2.1
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
@@ -148,7 +148,7 @@ cmake --install build
 ```
 
 The package uses unmodified `tink-tcl` 20240704.0.2, `bcrypt-tcl` 2.0.1,
-`tmfa` 1.1.2, `tsession` 1.1.0, and `twebserver` for cryptographic random bytes.
+`tmfa` 1.1.2, `tsession` 2.0.0, and `twebserver` for cryptographic random bytes.
 Keep persistent keysets and databases outside the source and install directories.
 
 Only the current storage and configuration format is supported. Unsalted email
@@ -180,3 +180,12 @@ invalidated by this storage change. Run explicit initialization before PROD star
 are HttpOnly, SameSite=Lax, Path=/, and Secure with a `__Host-` name in PROD.
 
 Request schemas use `topenapi` 0.2.0; see `schemas/operations.json` and the mounting guide.
+
+## Database indexes
+
+Session and account reads use primary/unique indexes. Expired rate-limit cleanup uses `web_user_limits_expiry (tenant, expires)`.
+
+All database operations use `tpersist`. Rerun the explicit `initdb` maintenance
+operation to add these indexes to existing databases. Index creation is
+idempotent and never runs in request handlers. The example-community integration
+suite verifies the access paths with SQLite and PostgreSQL EXPLAIN plans.
