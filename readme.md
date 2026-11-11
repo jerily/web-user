@@ -8,7 +8,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.1.6
+package require web-user 0.2.0
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
@@ -29,10 +29,10 @@ per site (for example, `openssl rand -hex 32`), keep it in private configuration
 and reuse it across workers and restarts. There is no default salt.
 `connect` uses SQLite only for LOCAL and PostgreSQL only for PROD; no fallback.
 The host must supply an autocommit connection (`-autobegin 0`) when using `create`
-directly. A host borrowing a connection is responsible for selecting the same
-backend policy. Schema changes never happen in `mount` or request handlers.
+directly. A borrowed connection must match the environment; a mismatched dialect is rejected.
+Sessions use `tsession-sqlite` in LOCAL and `tsession-postgres` in PROD. Schema changes never happen in `mount` or request handlers.
 
-Requires Tcl 9.1 or newer. Dependency minimums include tpersist 0.1.1,
+Requires Tcl 9.1 or newer. Dependency minimums include tpersist 0.1.2,
 Jinja 0.1.1, tjson 1.0.27, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.56.
 
 ## Names and shared widgets
@@ -59,6 +59,10 @@ The lifetimes, password and TOTP policy below are defaults. Configure them in
   email code in the requesting browser, expires after 15 minutes, changes the
   password once, invalidates every session/reset challenge for that account, and
   preserves MFA.
+- Change password at `/user/change-password` requires an authenticated session,
+  the current password and matching new-password confirmation. It enforces the
+  configured policy, preserves MFA, revokes every old session/challenge, and
+  issues a fresh authenticated session for this browser.
 - Authenticator setup requires the current password. A pending, encrypted secret
   produces an `otpauth://` QR code and manual key. It becomes active only after
   confirmation. Disabling requires both the password and an unused current OTP.
@@ -67,11 +71,22 @@ The lifetimes, password and TOTP policy below are defaults. Configure them in
 - Logout is POST with CSRF and deletes the server session. Auth sessions expire
   after 12 hours; anonymous/MFA/setup sessions after 10 minutes.
 
-Email delivery is intentionally a TODO. `deliver` config command prefix optionally
-receives `purpose email code` (purpose `verify` or `reset`) after commit. The
-default sends nothing. Wire delivery before using registration/recovery in PROD;
-errors in the callback propagate to the host. Reset codes must be entered in the
-browser that requested them. Codes are never placed in URLs or logs.
+Email is opt-in: set mount properties `email_enabled true`, `email_from`, and
+`email_region`. In PROD, `aws-sdk-tcl-ses` (`awsses` 1.0.16+) sends verification
+and recovery codes, MFA enabled/disabled notices, and password-change notices
+for both changes and resets. It uses the AWS credential provider chain. LOCAL
+never invokes SES. Disabled email sends nothing; PROD registration/recovery
+therefore needs email enabled or an explicitly configured transport.
+
+An optional `deliver` command prefix replaces SES and receives `purpose email
+code`; it also requires `email_enabled true` and may run in LOCAL. Purposes are
+`verify`, `reset`, `password-changed`, `mfa-enabled`, and `mfa-disabled`. Notices
+have an empty code and contain no password or MFA secret. Delivery happens after
+commit. A failure logs a generic error while preserving the committed result
+and replacement cookie; it does not expose account existence. There is no
+persistent delivery queue or application retry worker. SES uses the SDK's retry
+policy; operators must monitor delivery failures. Recovery codes must be entered
+in the requesting browser and are never put in URLs or logs.
 
 Only exact `ENV=LOCAL` displays current development codes in returned forms.
 There is no request parameter or site property to enable code exposure in PROD.
@@ -133,7 +148,7 @@ cmake --install build
 ```
 
 The package uses unmodified `tink-tcl` 20240704.0.2, `bcrypt-tcl` 2.0.1,
-`tmfa` 1.1.2, `tsession` 1.0.4, and `twebserver` for cryptographic random bytes.
+`tmfa` 1.1.2, `tsession` 1.1.0, and `twebserver` for cryptographic random bytes.
 Keep persistent keysets and databases outside the source and install directories.
 
 Only the current storage and configuration format is supported. Unsalted email
@@ -145,7 +160,7 @@ With dependencies on `TCLLIBPATH`:
 
 ```sh
 ENV=LOCAL tclsh tests/all.tcl
-# Optional: run the same cases against an isolated PostgreSQL database:
+# Optional: also run PROD account/password/session cases against PostgreSQL:
 WEB_USER_TEST_PG='-host 127.0.0.1 -port 55439 -database postgres -user test' \
   ENV=LOCAL tclsh tests/all.tcl
 ```
@@ -158,7 +173,10 @@ runs use unique tenant namespaces; never point tests at a production database.
 
 `tsession` signs, reads and sets each mount's cookie using its own configuration
 and the store's Tink MAC handle. Session records, absolute expiry and revocation
-remain in `tpersist`; no in-memory session middleware is initialized. Cookies
+use `tsession-sqlite` (LOCAL) or `tsession-postgres` (PROD), with the same borrowed
+`tpersist` connection as account writes. `initdb` creates `tsession_sessions`;
+there is no old-table fallback or session migration. Existing sessions are
+invalidated by this storage change. Run explicit initialization before PROD startup. Cookies
 are HttpOnly, SameSite=Lax, Path=/, and Secure with a `__Host-` name in PROD.
 
-Request schemas use `topenapi` 0.2.0; see `assets/operations.json` and the mounting guide.
+Request schemas use `topenapi` 0.2.0; see `schemas/operations.json` and the mounting guide.

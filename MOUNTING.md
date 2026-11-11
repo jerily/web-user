@@ -28,7 +28,7 @@ Set `ENV` to exactly `LOCAL` or `PROD` before loading the host configuration.
 schema explicitly before workers serve requests:
 
 ```tcl
-package require web-user 0.1.6
+package require web-user 0.2.0
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/accounts.sqlite3 \
     postgresql [dict create -host db -database accounts -user accounts]]]
@@ -144,6 +144,7 @@ cryptographic randomness; there is no shared secret or development key in code.
 | `/verify` | GET/HEAD, POST | Verification form / consume email code |
 | `/login` | GET/HEAD, POST | Password form / authenticate or require MFA |
 | `/forgot` | GET/HEAD, POST | Recovery form / issue reset code |
+| `/change-password` | GET/HEAD, POST | Current password plus new password and confirmation; revoke old sessions, preserve MFA |
 | `/reset` | GET/HEAD, POST | Reset form / consume code and replace password |
 | `/two-factor` | GET/HEAD, POST | Pending-login OTP challenge |
 | `/two-factor/setup` | GET/HEAD, POST | Setup page; `operation=begin` or `confirm` |
@@ -159,6 +160,7 @@ foreign origins remain rejected, as do invalid session-bound CSRF tokens.
 
 POST accepts URL-encoded forms and a `csrf` field. Required fields: registration
 and login `email password`; forgot `email`; verify/MFA `code`; reset `code password`;
+change password `current_password password confirm_password`;
 setup begin `operation password`; setup confirm `operation code`; disable
 `password code`. Duplicate keys, invalid encodings, oversized forms, wrong content
 types and invalid CSRF are rejected. GET creates an anonymous session if needed.
@@ -179,23 +181,38 @@ complete adapter, persistent LOCAL keys, shared master, and all four mounts.
 
 ## Email delivery and LOCAL codes
 
-An optional `deliver` config command prefix receives `purpose email code` after the
-transaction commits. `purpose` is `verify` or `reset`. Its default implementation
-is a TODO and sends nothing. Hosts must implement delivery for production use;
-callback failures propagate to the host. Verification and password-reset codes
-contain exactly six ASCII digits; preserve leading zeros when delivering them.
-Never log codes or place them in URLs.
+Mount settings `email_enabled` (false by default), `email_from` (sender address)
+and `email_region` (AWS region) control SES delivery. With `email_enabled true`
+in PROD, sender and region are required and `awsses` 1.0.16 is loaded. Credentials
+come from the AWS SDK provider chain. Configure SES sender authorization in the
+chosen region. LOCAL never invokes SES.
 
-LOCAL shows verification, recovery and current authenticator codes in the forms.
-PROD suppresses those development fields; both modes enforce the same expiry,
-CSRF and replay checks. Recovery codes must be entered in the browser that
-requested them. Authenticator enrollment always shows the QR/manual setup key.
+An optional `deliver` command prefix overrides SES, still gated by
+`email_enabled`; it can run in LOCAL for custom transports/tests. Arguments are
+`purpose email code`. Purposes: `verify`, `reset`, `password-changed`,
+`mfa-enabled`, `mfa-disabled`. The last three carry an empty code. Password
+changes and resets both notify the account owner; MFA enrollment notifies only
+after successful confirmation. No password or authenticator secret is emailed.
+
+Delivery follows commit. A transport failure logs a generic error, keeps the
+completed state and replacement cookie, and does not disclose whether a recovery
+address exists. There is no durable outbox or application retry worker. Monitor
+failures; a user can repeat registration/recovery to request a fresh code.
+When delivery is disabled, PROD has no code delivery path by default.
+
+LOCAL shows verification, recovery and current authenticator codes in forms.
+PROD suppresses these fields; expiry, replay and CSRF checks apply in both modes.
+Reset codes must be entered in the browser that requested them. QR/manual setup
+secrets appear during authenticator enrollment in both environments.
 
 ## Cookie ownership
 
 Each account mount configures `tsession::cookie` with its own cookie name and
 borrowed Tink MAC handle. `tsession` signs, verifies, reads and sets the cookie;
-`web-user` owns database session expiry, rotation and revocation. PROD passes
+`tsession-sqlite` (LOCAL) and `tsession-postgres` (PROD) persist sessions in
+`tsession_sessions`. Both borrow the account connection so credential changes
+and revocation are atomic. `create` and `initdb` reject a mismatched dialect.
+`web-user` owns session policy and rotation; stores enforce absolute expiry. PROD passes
 `-secure true`, LOCAL passes `-secure false`. HttpOnly, SameSite=Lax and Path=/
 apply in both environments; PROD also uses a `__Host-` cookie name. A host must
 keep the keyset handle alive for the mount's lifetime. No global tsession store
@@ -204,7 +221,7 @@ other's cookie configuration.
 
 ## Request validation
 
-`assets/operations.json` contains inline OpenAPI operations for each POST form.
+`schemas/operations.json` contains inline OpenAPI operations for each POST form.
 Mounting applies configured limits and captures the resulting JSON. `topenapi`
 0.2.0 validates required fields, types, lengths and allowed operations after
 strict form decoding and CSRF verification. Unknown form fields are rejected.

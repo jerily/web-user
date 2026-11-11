@@ -1,6 +1,7 @@
 package require tcltest
 package require web-user
 namespace import ::tcltest::*
+::tcltest::testConstraint postgres [info exists ::env(WEB_USER_TEST_PG)]
 namespace eval ::authtest {variable password {a long testing password}; variable serial 0}
 proc ::authtest::setup {{mode LOCAL} {policy {}} {mount {}}} {
     variable serial
@@ -14,7 +15,7 @@ proc ::authtest::setup {{mode LOCAL} {policy {}} {mount {}}} {
     variable handles
     set ::env(ENV) $mode
     set db [::tpersist::db_connect -database :memory: -autobegin 0]
-    if {[info exists ::env(WEB_USER_TEST_PG)]} {
+    if {$mode eq "PROD"} {
         ::tpersist::db_disconnect $db
         set db [::tpersist::db_connect -dialect postgresql -autobegin 0 {*}$::env(WEB_USER_TEST_PG)]
     }
@@ -22,7 +23,7 @@ proc ::authtest::setup {{mode LOCAL} {policy {}} {mount {}}} {
     set handles [list [::tink::register_keyset [::tink::aead::create_keyset AES256_GCM]] [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]]
     set store [::web::user::create -connection $db -config [dict merge [dict create tenant test-[pid]-[incr serial] aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt test-email-salt] $policy]]
     set router [::tpathexp::router]
-    set config [::web::user::mount $router -store $store -config [dict merge {origin https://community.test deliver ::authtest::delivery} $mount]]
+    set config [::web::user::mount $router -store $store -config [dict merge {origin https://community.test email_enabled true deliver ::authtest::delivery} $mount]]
     set ::authtest::delivered {}
     set ::authtest::csrf {}
     set ::authtest::cookie {}
@@ -93,7 +94,7 @@ test auth-2 {CSRF, origin, malformed form, expiry, and reset-only sessions} -set
     ::authtest::call POST /user/forgot {email person@example.com}
     lappend result [expr {[::authtest::me] eq {}}] [::authtest::call GET /user]
     set row [::web::user::session $::authtest::store [::authtest::token]]
-    ::web::user::update $::authtest::store web_user_sessions [dict create id [dict get $row id]] {expires 0}
+    ::tsession::sql::update [dict get $::authtest::store -sessions] [dict get $row id] {expires 0}
     lappend result [::authtest::call POST /user/reset [dict create code [lindex $::authtest::delivered 2] password $::authtest::password]]
     set result
 } -cleanup {::authtest::cleanup} -result {403 403 1 401 403}
@@ -133,7 +134,7 @@ test auth-4 {2FA enrollment, pending principal, OTP replay and disable} -setup {
     lappend result [dict get [::authtest::me] mfa_enabled]
     set result
 } -cleanup {::authtest::cleanup} -result {1 1 401 200 1 200 0}
-test auth-5 {PROD never exposes codes, cookie is Secure, anonymous reset has same response} -setup {::authtest::setup PROD} -body {
+test auth-5 {PROD never exposes codes, cookie is Secure, anonymous reset has same response} -constraints postgres -setup {::authtest::setup PROD} -body {
     ::authtest::register
     ::authtest::call POST /user/forgot {email person@example.com}
     set known [dict get $::authtest::last body]
@@ -347,7 +348,7 @@ test auth-19 {numeric confirmation codes expire and enforce the challenge attemp
     ::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]
     set code [lindex $::authtest::delivered 2]
     set row [::web::user::session $::authtest::store [::authtest::token]]
-    ::web::user::update $::authtest::store web_user_sessions [dict create id [dict get $row id]] {expires 0}
+    ::tsession::sql::update [dict get $::authtest::store -sessions] [dict get $row id] {expires 0}
     set result [list [regexp {^[0-9]{6}$} $code] [::authtest::call POST /user/verify [dict create code $code]]]
     lappend result [dict get [::web::user::user_by_id $::authtest::store [dict get $row uid]] verified]
     ::authtest::call GET /user/register
@@ -542,4 +543,132 @@ test auth-28 {registration, login and recovery share the salted email lookup} -s
         [::authtest::call POST /user/forgot {email person@example.com}] $::authtest::delivered
     set result
 } -cleanup {::authtest::cleanup} -result {200 1 200 1 200 {reset person@example.com} 401 200 {}}
+test auth-store-policy {LOCAL selects SQLite and PROD rejects a borrowed SQLite connection} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+} -body {
+    set result [list [dict get $::authtest::store -sessions dialect]]
+    set ::env(ENV) PROD
+    lappend result [catch {::web::user::create -connection $::authtest::db -config [dict get $::authtest::store -config]} message] $message
+    set result
+} -cleanup {set ::env(ENV) LOCAL; ::authtest::cleanup} -result {sqlite 1 {session store requires a postgresql connection}}
+
+foreach mode {LOCAL PROD} {
+    set constraint [expr {$mode eq "PROD" ? "postgres" : {}}]
+    test auth-password-$mode {password change rotates/revokes sessions, preserves MFA and sends a notification} -constraints $constraint -setup {
+        ::authtest::setup $mode {bcrypt_cost 5 password_min_length 18}
+        ::authtest::register
+        ::authtest::login
+        ::authtest::setup_mfa
+    } -body {
+        set store $::authtest::store
+        set uid [dict get [::authtest::me] id]
+        set before [::web::user::user_by_id $store $uid]
+        set old [::authtest::token]
+        set other [::web::user::new_session $store auth $uid]
+        set reset [::web::user::new_session $store reset $uid 123456]
+        set next {  a different long password  }
+        set result [list [::authtest::call GET /user/change-password] \
+            [string match {*name="current_password"*} [dict get $::authtest::last body]] \
+            [string match {*minlength="18"*} [dict get $::authtest::last body]]]
+        lappend result [::authtest::call POST /user/change-password [dict create current_password $::authtest::password password $next confirm_password $next]]
+        set after [::web::user::user_by_id $store $uid]
+        lappend result [expr {[::authtest::token] ne $old}] \
+            [expr {[dict get [::authtest::me] id] eq $uid}] \
+            [expr {[dict get $before mfa_secret] eq [dict get $after mfa_secret]}] \
+            [expr {[dict get $before last_step] == [dict get $after last_step]}] \
+            [::web::user::password_ok $after $next] [::web::user::password_ok $after $::authtest::password] \
+            [lindex $::authtest::delivered 0]
+        foreach token [list $old $other $reset] {lappend result [expr {[::web::user::session $store $token] eq {}}]}
+        set result
+    } -cleanup {::authtest::cleanup} -result {200 1 1 200 1 1 1 1 1 0 password-changed 1 1 1}
+
+    test auth-password-rollback-$mode {failed replacement rolls back credentials and revocation and sends no notice} -constraints $constraint -setup {
+        ::authtest::setup $mode {bcrypt_cost 5}
+        ::authtest::register
+        ::authtest::login
+        rename ::web::user::new_session ::web::user::saved_new_session
+        proc ::web::user::new_session {args} {error "injected session write failure"}
+    } -body {
+        set token [::authtest::token]
+        set store $::authtest::store
+        set uid [dict get [::authtest::me] id]
+        set before [::web::user::user_by_id $store $uid]
+        set ::authtest::delivered {}
+        set failed [catch {::authtest::call POST /user/change-password [dict create \
+            current_password $::authtest::password password {a different long password} confirm_password {a different long password}]}]
+        list $failed [expr {[::web::user::user_by_id $store $uid] eq $before}] \
+            [expr {[::web::user::session $store $token] ne {}}] $::authtest::delivered
+    } -cleanup {
+        rename ::web::user::new_session {}
+        rename ::web::user::saved_new_session ::web::user::new_session
+        ::authtest::cleanup
+    } -result {1 1 1 {}}
+}
+
+test auth-password-validation {current password, confirmation, policy, CSRF and authenticated session are required} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5 password_min_length 18 account_limit 100}
+    ::authtest::register
+    ::authtest::login
+} -body {
+    set fields [dict create current_password $::authtest::password password {a different long password} confirm_password {a different long password}]
+    set result [list [::authtest::call POST /user/change-password [dict replace $fields csrf wrong]] \
+        [::authtest::call POST /user/change-password [dict replace $fields current_password wrong]] \
+        [::authtest::call POST /user/change-password [dict replace $fields confirm_password wrong]] \
+        [::authtest::call POST /user/change-password [dict remove $fields current_password]]]
+    foreach value [list short [string repeat é 37] "valid length with\x00nul"] {
+        lappend result [::authtest::call POST /user/change-password [dict replace $fields password $value confirm_password $value]]
+    }
+    lappend result [::authtest::call POST /user/change-password $fields {origin https://foreign.test}]
+    ::authtest::call POST /user/logout
+    lappend result [::authtest::call GET /user/change-password] [::authtest::call POST /user/change-password $fields]
+    ::authtest::call POST /user/forgot {email person@example.com}
+    lappend result [::authtest::call POST /user/change-password $fields]
+    set result
+} -cleanup {::authtest::cleanup} -result {403 401 400 400 400 400 400 403 401 401 401}
+
+test auth-password-throttle {incorrect current passwords consume the persistent account limit} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5 account_limit 2}
+    ::authtest::register
+    ::authtest::login
+} -body {
+    set fields {current_password wrong password {a different long password} confirm_password {a different long password}}
+    list [::authtest::call POST /user/change-password $fields] [::authtest::call POST /user/change-password $fields] \
+        [::authtest::call POST /user/change-password $fields]
+} -cleanup {::authtest::cleanup} -result {401 401 429}
+
+test auth-email-events {MFA changes and completed resets emit notices without secrets} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+    ::authtest::register
+    ::authtest::login
+} -body {
+    set secret [::authtest::setup_mfa]
+    set result [list $::authtest::delivered]
+    set uid [dict get [::authtest::me] id]
+    ::web::user::update $::authtest::store web_user_users [dict create id $uid] {last_step -1}
+    ::authtest::call POST /user/two-factor/disable [dict create password $::authtest::password code [::web::user::totp_code $::authtest::store $secret]]
+    lappend result $::authtest::delivered
+    ::authtest::call POST /user/forgot {email person@example.com}
+    ::authtest::call POST /user/reset [dict create code [lindex $::authtest::delivered 2] password $::authtest::password]
+    lappend result $::authtest::delivered
+    set result
+} -cleanup {::authtest::cleanup} -result {{mfa-enabled person@example.com {}} {mfa-disabled person@example.com {}} {password-changed person@example.com {}}}
+
+test auth-email-failure {delivery errors preserve the committed password and replacement cookie} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+    ::authtest::register
+    ::authtest::login
+    rename ::authtest::delivery ::authtest::saved_delivery
+    proc ::authtest::delivery {args} {error "sensitive transport error"}
+} -body {
+    set fields [dict create current_password $::authtest::password password {a different long password} confirm_password {a different long password}]
+    set result [list [::authtest::call POST /user/change-password $fields] [expr {[::authtest::me] ne {}}]]
+    lappend result [string match {*sensitive transport error*} [dict get $::authtest::last body]]
+    set result
+} -cleanup {
+    rename ::authtest::delivery {}
+    rename ::authtest::saved_delivery ::authtest::delivery
+    ::authtest::cleanup
+} -result {200 1 0}
+
+
 cleanupTests
