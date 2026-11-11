@@ -91,7 +91,7 @@ proc ::web::user::render {config view token {extra {}}} {
         foreach key {email first_name last_name} {dict set fields $key [dict get $public $key]}
         set enabled [dict get $public mfa_enabled]
     }
-    if {$view in {account profile two-factor/setup two-factor/disable}} {require_user $store $row}
+    if {$view in {account profile change-password two-factor/setup two-factor/disable}} {require_user $store $row}
     if {$view eq "two-factor/setup" && [dict get $row pending_secret] ne {}} {
         set secret [unseal $store [dict get $row pending_secret] [list mfa [dict get $user id]]]
         set uri [::tmfa::keyuri $secret totp [dict get $fields email] -issuer [dict get $config -config issuer] {*}[totp_options $store]]
@@ -149,7 +149,7 @@ proc ::web::user::handle {config view handler challenge request context} {
             set result [{*}$handler $config $fresh $fields]
         }
         if {[dict get $result token] ne {}} {set token [dict get $result token]}
-        if {[dict get $result delivery] ne {}} {deliver $config {*}[dict get $result delivery]}
+        deliver_after_commit $config [dict get $result delivery]
         set extra [dict create message [dict get $result message] debug_code [dict get $result debug_code]]
         return [set_cookie $config [render $config [dict get $result view] $token $extra] $token]
     } trap {WEB USER} {message opts} {
@@ -184,6 +184,10 @@ proc ::web::user::forgot {config request context params} {
 
 proc ::web::user::reset {config request context params} {
     handle $config reset ::web::user::action_reset 1 $request $context
+}
+
+proc ::web::user::change_password {config request context params} {
+    handle $config change-password ::web::user::action_change_password 0 $request $context
 }
 
 proc ::web::user::two_factor {config request context params} {

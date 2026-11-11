@@ -96,7 +96,24 @@ proc ::web::user::action_reset {config row fields} {
     dict set result token [new_session $store]
     dict set result view login
     dict set result message {Password changed. Sign in again.}
+    dict set result delivery [notification $store $user password-changed]
     return $result
+}
+
+proc ::web::user::action_change_password {config row fields} {
+    set store [dict get $config -store]
+    set user [require_user $store $row]
+    if {![password_ok $user [dict get $fields current_password]]} {fail 401 "Invalid current password."}
+    if {[dict get $fields password] ne [dict get $fields confirm_password]} {fail 400 "New passwords do not match."}
+    set hash [password_hash [dict get $fields password] [dict get $store -config]]
+    save_user $store $user [dict create password $hash]
+    set uid [dict get $user id]
+    revoke $store $uid
+    # Keep this authenticated browser signed in with a fresh token. MFA settings
+    # and replay state remain unchanged; all old sessions/challenges are revoked.
+    return [dict create token [new_session $store auth $uid] view account \
+        message {Password changed. Other sessions were signed out.} debug_code {} \
+        delivery [notification $store $user password-changed]]
 }
 
 proc ::web::user::action_two_factor {config row fields} {
@@ -124,8 +141,10 @@ proc ::web::user::action_two_factor_setup {config row fields} {
     if {[dict get $fields operation] eq "begin"} {
         if {![password_ok $user [dict get $fields password]]} {fail 401 "Invalid password."}
         set secret [string trimright [::tmfa::base32_encode [::twebserver::random_bytes 20]] =]
-        update $store web_user_sessions [dict create id [dict get $row id]] \
-            [dict create pending_secret [seal $store $secret [list mfa $uid]] expires [expr {[clock seconds] + [property $store challenge_ttl]}]]
+        if {[::tsession::sql::update [dict get $store -sessions] [dict get $row id] \
+            [dict create pending_secret [seal $store $secret [list mfa $uid]] expires [expr {[clock seconds] + [property $store challenge_ttl]}]]] != 1} {
+            fail 409 "Session changed; retry the request."
+        }
         dict set result token {}
         dict set result view two-factor/setup
     } elseif {[dict get $fields operation] eq "confirm"} {
@@ -138,6 +157,7 @@ proc ::web::user::action_two_factor_setup {config row fields} {
         dict set result token [new_session $store auth $uid]
         dict set result view account
         dict set result message {Two-factor authentication enabled. Other sessions were signed out.}
+        dict set result delivery [notification $store $user mfa-enabled]
     } else {fail 400 "Unknown setup operation."}
     return $result
 }
@@ -155,6 +175,7 @@ proc ::web::user::action_two_factor_disable {config row fields} {
     dict set result token [new_session $store auth $uid]
     dict set result view account
     dict set result message {Two-factor authentication disabled. Other sessions were signed out.}
+    dict set result delivery [notification $store $user mfa-disabled]
     return $result
 }
 

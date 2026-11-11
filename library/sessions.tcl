@@ -1,26 +1,29 @@
+proc ::web::user::session_backend {} {
+    set backend [expr {[environment] eq "LOCAL" ? "sqlite" : "postgres"}]
+    package require tsession-$backend 1.0.0
+    return ::tsession::$backend
+}
 proc ::web::user::session {store token} {
     if {![regexp {^[a-f0-9]{64}$} $token]} {return {}}
-    set row [one $store web_user_sessions [dict create id [tag $store $token session]]]
-    if {$row eq {} || [dict get $row expires] <= [clock seconds]} {return {}}
-    return $row
+    ::tsession::sql::get [dict get $store -sessions] [tag $store $token session]
 }
 proc ::web::user::new_session {store {kind anon} {uid {}} {code {}}} {
     set token [random_token]
     set id [tag $store $token session]
     set ttl [property $store [expr {$kind eq "auth" ? "session_ttl" : ($kind in {verify reset} ? "code_ttl" : "challenge_ttl")}]]
     set codeTag [expr {$code eq {} ? {} : [tag $store $code [list code $id]]}]
-    insert $store web_user_sessions [dict create id $id uid $uid kind $kind \
-        expires [expr {[clock seconds] + $ttl}] code_tag $codeTag attempts 0 pending_secret {}]
+    ::tsession::sql::insert [dict get $store -sessions] $id [dict create uid $uid kind $kind \
+        expires [expr {[clock seconds] + $ttl}] code_tag $codeTag pending_secret {}] $uid
     return $token
 }
 proc ::web::user::consume {store row} {
-    if {[remove $store web_user_sessions [dict create id [dict get $row id]]] != 1} {fail 409 "This request was already completed."}
+    if {[::tsession::sql::delete [dict get $store -sessions] [dict get $row id]] != 1} {fail 409 "This request was already completed."}
 }
 proc ::web::user::rotate {store row kind {uid {}} {code {}}} {
     if {$row ne {}} {consume $store $row}
     new_session $store $kind $uid $code
 }
-proc ::web::user::revoke {store uid} {remove $store web_user_sessions [dict create uid $uid]}
+proc ::web::user::revoke {store uid} {::tsession::sql::revoke [dict get $store -sessions] $uid}
 proc ::web::user::public_user {store user} {
     set names [profile_names $store [dict get $user id]]
     set displayName [dict get $names first_name]
@@ -49,9 +52,4 @@ proc ::web::user::throttle {store subject maximum} {
         [db_values [db_update web_user_limits] [dict create hits [db_add [db_col hits] [db_value 1 -type integer]]] -expressions] \
         [predicate $store $where]]
     if {[dict get [one $store web_user_limits $where] hits] > $maximum} {fail 429 "Too many attempts. Try again later."}
-}
-# TODO: deliver verification/reset messages by email. The default deliberately sends nothing.
-# Hosts configure a deliver command prefix; it receives purpose, email, code.
-proc ::web::user::deliver {config purpose destination code} {
-    if {[dict get $config -deliver] ne {}} {{*}[dict get $config -deliver] $purpose $destination $code}
 }

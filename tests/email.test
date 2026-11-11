@@ -1,0 +1,83 @@
+package require tcltest
+package require web-user
+package require awsses 1.0.16
+namespace import ::tcltest::*
+namespace eval ::mailtest {}
+proc ::mailtest::setup {} {
+    variable calls {}
+    variable fail 0
+    variable config [dict create -deliver {} -prefix /members \
+        -store [dict create -env PROD -config {code_ttl 900}] \
+        -config {email_enabled true email_from sender@example.com email_region us-east-1 title Garden origin https://garden.test}]
+    rename ::aws::ses::create ::mailtest::real_create
+    proc ::aws::ses::create {options} {
+        lappend ::mailtest::calls [list create $options]
+        return ::mailtest::client
+    }
+}
+proc ::mailtest::client {method args} {
+    lappend ::mailtest::calls [list $method {*}$args]
+    if {$method eq "send_email" && $::mailtest::fail} {error "injected failure"}
+    return test-message-id
+}
+proc ::mailtest::cleanup {} {
+    rename ::aws::ses::create {}
+    rename ::mailtest::real_create ::aws::ses::create
+}
+
+test email-1 {SES receives the configured region, sender, recipient and expiring code; client is released} -setup {
+    ::mailtest::setup
+} -body {
+    ::web::user::validate_email_config $::mailtest::config
+    ::web::user::deliver $::mailtest::config verify person@example.com 012345
+    set message [lindex $::mailtest::calls 1 1]
+    list [lindex $::mailtest::calls 0] [dict get $message from] [dict get $message to] \
+        [string match {*012345*900 seconds*} [dict get $message text]] \
+        [string match {*https://garden.test/members/verify*} [dict get $message text]] [lindex $::mailtest::calls end]
+} -cleanup {::mailtest::cleanup} -result {{create {region us-east-1}} sender@example.com person@example.com 1 1 destroy}
+
+test email-2 {disabled delivery and LOCAL never create an SES client} -setup {::mailtest::setup} -body {
+    set config $::mailtest::config
+    dict set config -config email_enabled false
+    dict set config -config email_region {}
+    dict set config -config email_from {}
+    ::web::user::validate_email_config $config
+    ::web::user::deliver $config reset person@example.com 012345
+    dict set config -config email_enabled true
+    dict set config -store -env LOCAL
+    ::web::user::validate_email_config $config
+    ::web::user::deliver $config reset person@example.com 012345
+    set ::mailtest::calls
+} -cleanup {::mailtest::cleanup} -result {}
+
+test email-3 {PROD opt-in requires a valid flag, sender and region} -setup {::mailtest::setup} -body {
+    set result {}
+    foreach {key value} {email_enabled maybe email_from {} email_region {} email_region {invalid region}} {
+        set config $::mailtest::config
+        dict set config -config $key $value
+        lappend result [catch {::web::user::validate_email_config $config}]
+    }
+    set result
+} -cleanup {::mailtest::cleanup} -result {1 1 1 1}
+
+test email-4 {notification templates contain no code or credential; failures still destroy the client} -setup {::mailtest::setup} -body {
+    set result {}
+    foreach purpose {password-changed mfa-enabled mfa-disabled} {
+        set message [::web::user::email_message $::mailtest::config $purpose person@example.com should-not-appear]
+        lappend result [expr {[string first should-not-appear [dict get $message text]] < 0}] \
+            [string match {*https://garden.test/members/forgot*} [dict get $message text]]
+    }
+    set ::mailtest::fail 1
+    lappend result [catch {::web::user::deliver $::mailtest::config reset person@example.com 123456}] \
+        [lindex $::mailtest::calls end]
+    set result
+} -cleanup {::mailtest::cleanup} -result {1 1 1 1 1 1 1 destroy}
+
+test email-5 {the enable flag also gates an explicit delivery callback} -setup {::mailtest::setup} -body {
+    set config $::mailtest::config
+    dict set config -deliver ::mailtest::client
+    dict set config -config email_enabled false
+    ::web::user::deliver $config reset person@example.com 123456
+    set ::mailtest::calls
+} -cleanup {::mailtest::cleanup} -result {}
+cleanupTests

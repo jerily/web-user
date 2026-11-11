@@ -25,15 +25,14 @@ proc ::web::user::connect {config} {
     db_connect -dialect postgresql -autobegin 0 {*}$pg
 }
 proc ::web::user::initdb {connection} {
+    set backend [session_backend]
+    ${backend}::initdb $connection
     foreach {table columns primary} {
         web_user_users {
             tenant text id text email_key text email text password text verified integer
             mfa_secret text last_step bigint revision integer created_at bigint
         } {tenant id}
         web_user_profiles {tenant text id text first_name text last_name text} {tenant id}
-        web_user_sessions {
-            tenant text id text uid text kind text expires bigint code_tag text attempts integer pending_secret text
-        } {tenant id}
         web_user_limits {tenant text id text hits integer expires bigint} {tenant id}
     } {
         set fields {}
@@ -55,6 +54,8 @@ proc ::web::user::create {args} {
     dict set config -config $settings
     foreach key {-connection -tenant -aead -mac} {if {[dict get $config $key] eq {}} {error "$key is required"}}
     dict set config -env [environment]
+    set backend [session_backend]
+    dict set config -sessions [${backend}::create -connection [dict get $config -connection] -tenant [dict get $config -tenant]]
     # Validate both key handles before accepting any requests.
     set probe [seal $config probe check]
     if {[unseal $config $probe check] ne "probe"} {error "invalid encryption key"}
@@ -93,10 +94,9 @@ proc ::web::user::save_user {store user changes} {
     dict merge $user $changes
 }
 proc ::web::user::prune {store} {
-    foreach table {web_user_sessions web_user_limits} {
-        db_execute [dict get $store -connection] [db_where [db_delete $table] \
-            [db_and [predicate $store {}] [db_le [db_col expires] [db_value [clock seconds] -type bigint]]]]
-    }
+    ::tsession::sql::prune [dict get $store -sessions]
+    db_execute [dict get $store -connection] [db_where [db_delete web_user_limits] \
+        [db_and [predicate $store {}] [db_le [db_col expires] [db_value [clock seconds] -type bigint]]]]
 }
 
 # TDBC must not infer byte arrays (hex/MAC values) as BLOBs for text columns.

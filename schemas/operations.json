@@ -19,7 +19,7 @@
               },
               "password": {
                 "type": "string",
-                "minLength": 15,
+                "minLength": 1,
                 "maxLength": 72
               },
               "first_name": {
@@ -161,7 +161,7 @@
               },
               "password": {
                 "type": "string",
-                "minLength": 15,
+                "minLength": 1,
                 "maxLength": 72
               }
             },
@@ -354,6 +354,47 @@
               "csrf",
               "first_name",
               "last_name"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "change-password": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "password": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 72
+              },
+              "current_password": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 72
+              },
+              "confirm_password": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 72
+              }
+            },
+            "required": [
+              "csrf",
+              "current_password",
+              "password",
+              "confirm_password"
             ],
             "additionalProperties": false
           }

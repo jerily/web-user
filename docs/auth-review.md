@@ -13,6 +13,9 @@ pending session never grants an authenticated identity.
 | Email lookup | Require persistent `email_hash_salt`; MAC the salt and normalized email with tenant/purpose binding; query the unique `(tenant, email_key)` index. No unsalted fallback. |
 | Concurrent account changes | Use transactions, checked challenge consumption and user revision checks. |
 | Authenticator replay | Persist the last accepted TOTP step and reject reuse across sessions. |
+| Password changes | Require an authenticated session and current password; enforce policy/confirmation; revoke old sessions, rotate this browser, preserve MFA. |
+| SQL session stores | SQLite in LOCAL and PostgreSQL in PROD; borrow the account transaction connection; enforce tenant scope, absolute expiry and revision-checked updates. |
+| Email | Opt-in PROD SES verification/recovery codes and password/MFA change notices after commit; no credentials in logs or notices. |
 | Password recovery | Consume the code once, revoke account sessions and preserve existing MFA. |
 | Attempt limits | Persist peer, account/action and challenge counters independently of failed authentication transactions. |
 | LOCAL diagnostics | Display development codes without changing verification, expiry or replay rules. |
@@ -23,7 +26,8 @@ its QR image. Each enrollment uses a fresh random secret. The package uses
 Tink's existing AEAD and MAC APIs, bcrypt-tcl for passwords, and twebserver for
 random bytes. Persist keys across workers and restarts.
 
-Email delivery remains a host callback/TODO. OAuth, phone registration,
+SES delivery is opt-in; hosts configure sender, region, credentials and monitor
+delivery failures. No durable email queue is included. OAuth, phone registration,
 magic-link login, MFA backup codes, roles and account administration are outside
 this package. Hosts own trusted origin/proxy configuration, TLS, delivery and
 scheduled pruning. See [MOUNTING.md](../MOUNTING.md) for the API contract.

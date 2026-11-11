@@ -1,10 +1,10 @@
 {
   "name": "web-user",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "scripts": {},
   "dependencies": {
     "tcl": ">=9.1.0,<10.0.0",
-    "tpersist": "^0.1.1",
+    "tpersist": "^0.1.2",
     "tpathexp": "^1.1.0",
     "jinja2-tcl": "^0.1.1",
     "tjson": "^1.0.27",
@@ -16,8 +16,11 @@
     "tdbcpostgres": ">=1.1.8",
     "bcrypt-tcl": "2.0.1",
     "twebserver": "^1.47.56",
-    "tsession": "1.0.4",
-    "topenapi": "^0.2.0"
+    "tsession": "^1.1.0",
+    "topenapi": "^0.2.0",
+    "tsession-sqlite": "^1.0.0",
+    "tsession-postgres": "^1.0.0",
+    "aws-sdk-tcl-ses": "^1.0.16"
   },
   "devDependencies": {}
 }
