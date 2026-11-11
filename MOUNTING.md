@@ -222,7 +222,9 @@ other's cookie configuration.
 ## Request validation
 
 `schemas/operations.json` contains inline OpenAPI operations for each POST form.
-Mounting applies configured limits and captures the resulting JSON. `topenapi`
+Password schemas require at least one character. Registration, reset and password
+change actions enforce the configured minimum and UTF-8 byte limit before saving.
+Mounting captures the JSON and adjusts name fields for `collect_names`. `topenapi`
 0.2.0 validates required fields, types, lengths and allowed operations after
 strict form decoding and CSRF verification. Unknown form fields are rejected.
 Authorization, password checks, MFA replay and transactions remain in the handlers.
