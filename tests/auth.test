@@ -671,4 +671,25 @@ test auth-email-failure {delivery errors preserve the committed password and rep
 } -result {200 1 0}
 
 
+test auth-password-schema-policy {credential schemas allow one character; writes enforce the configured minimum} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5 password_min_length 18}
+    ::authtest::register
+    ::authtest::login
+} -body {
+    set result {}
+    foreach action {register change-password reset} {
+        set document [::tjson::parse [dict get $::authtest::config -operations $action]]
+        try {
+            lappend result [::tjson::to_json [lindex [::tjson::query $document {$.requestBody.content['application/x-www-form-urlencoded'].schema.properties.password.minLength}] 0]]
+        } finally {::tjson::destroy $document}
+    }
+    set fields [dict create current_password $::authtest::password password x confirm_password x]
+    lappend result [::authtest::call POST /user/change-password $fields]         [string match {*Password must contain at least 18 characters*} [dict get $::authtest::last body]]
+    ::authtest::call POST /user/forgot {email person@example.com}
+    lappend result [::authtest::call POST /user/reset [dict create code [lindex $::authtest::delivered 2] password x]]         [string match {*Password must contain at least 18 characters*} [dict get $::authtest::last body]]
+    lappend result [::authtest::call POST /user/register {email another@example.com password x}] \
+        [string match {*Password must contain at least 18 characters*} [dict get $::authtest::last body]]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 400 1 400 1 400 1}
+
 cleanupTests

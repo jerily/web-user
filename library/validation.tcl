@@ -18,12 +18,7 @@ proc ::web::user::read_operations {filename overrides} {
 }
 proc ::web::user::request_operations {store} {
     variable root
-    set overrides {}
-    foreach action {register reset change-password} {
-        set path [format {$['%s'].requestBody.content['application/x-www-form-urlencoded'].schema.properties.password} $action]
-        dict set overrides $path [dict create minLength [property $store password_min_length]]
-    }
-    set operations [read_operations [file join $root schemas operations.json] $overrides]
+    set operations [read_operations [file join $root schemas operations.json] {}]
     if {![property $store collect_names]} {
         set document [::tjson::parse [dict get $operations register]]
         try {

@@ -19,7 +19,7 @@
               },
               "password": {
                 "type": "string",
-                "minLength": 15,
+                "minLength": 1,
                 "maxLength": 72
               },
               "first_name": {
@@ -161,7 +161,7 @@
               },
               "password": {
                 "type": "string",
-                "minLength": 15,
+                "minLength": 1,
                 "maxLength": 72
               }
             },
@@ -376,7 +376,7 @@
               },
               "password": {
                 "type": "string",
-                "minLength": 15,
+                "minLength": 1,
                 "maxLength": 72
               },
               "current_password": {
