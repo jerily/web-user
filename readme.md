@@ -1,5 +1,7 @@
 # web-user
 
+Licensed under the [MIT License](LICENSE).
+
 Email/password accounts mounted on a `tpathexp` site router. OAuth is outside this
 package. Uses `tpersist`/TDBC, `tink-tcl`, `tmfa`, `tqrcodegen`, `ksuid-tcl`,
 `jinja2-tcl`, `tjson`, `bcrypt-tcl`, and `twebserver`. The package owns its routes, templates, account records,
@@ -8,7 +10,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.2.1
+package require web-user 0.2.2
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
