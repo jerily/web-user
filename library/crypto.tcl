@@ -1,3 +1,10 @@
+#
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+#
+
+# Generate an unpredictable browser credential.
 proc ::web::user::random_token {} {binary encode hex [::twebserver::random_bytes 32]}
 # Accept 16 million of the 2^24 values to avoid bias when reducing to six digits.
 proc ::web::user::verification_code {} {
@@ -6,18 +13,22 @@ proc ::web::user::verification_code {} {
         if {$value < 16000000} {return [format %06d [expr {$value % 1000000}]]}
     }
 }
+# Authenticate a value with tenant and purpose separation.
 proc ::web::user::tag {store value purpose} {
     binary encode hex [::tink::mac::compute [dict get $store -mac] \
         [encoding convertto utf-8 [list web-user [dict get $store -tenant] $purpose $value]]]
 }
+# Encrypt a sensitive field with tenant-bound associated data.
 proc ::web::user::seal {store value purpose} {
     binary encode base64 -maxlen 0 [::tink::aead::encrypt [dict get $store -aead] \
         [encoding convertto utf-8 $value] [encoding convertto utf-8 [list web-user [dict get $store -tenant] $purpose]]]
 }
+# Decrypt a field only for its original tenant and purpose.
 proc ::web::user::unseal {store value purpose} {
     encoding convertfrom utf-8 [::tink::aead::decrypt [dict get $store -aead] \
         [binary decode base64 -strict $value] [encoding convertto utf-8 [list web-user [dict get $store -tenant] $purpose]]]
 }
+# Normalize and validate an email address.
 proc ::web::user::email {value} {
     set value [string tolower [string trim $value]]
     if {[string length $value] > 254 || ![regexp {^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$} $value]} {
@@ -40,6 +51,7 @@ proc ::web::user::password_hash {value {config {}}} {
     }
     ::bcrypt::hashpw $value [::bcrypt::gensalt [dict get $config bcrypt_cost]]
 }
+# Check a submitted password against a supported bcrypt hash.
 proc ::web::user::password_ok {user value} {
     set bytes [encoding convertto utf-8 $value]
     if {[string length $bytes] < 1 || [string length $bytes] > 72 || [string first \x00 $value] >= 0} {return 0}
@@ -48,11 +60,13 @@ proc ::web::user::password_ok {user value} {
     if {![regexp {^\$2[aby]\$(0[4-9]|1[0-6])\$[./A-Za-z0-9]{53}$} $hash]} {return 0}
     ::bcrypt::checkpw $value $hash
 }
+# Verify a tenant- and purpose-bound MAC.
 proc ::web::user::verify_tag {store digest value purpose} {
     if {![regexp {^(?:[0-9a-f]{2})+$} $digest]} {return 0}
     ::tink::mac::verify [dict get $store -mac] [binary decode hex $digest] \
         [encoding convertto utf-8 [list web-user [dict get $store -tenant] $purpose $value]]
 }
+# Find an acceptable authenticator step while rejecting replay.
 proc ::web::user::totp_step {store secret code last} {
     set digits [property $store totp_digits]
     if {[string length $code] != $digits || ![regexp {^[0-9]+$} $code]} {return -1}

@@ -11,7 +11,9 @@ pending session never grants an authenticated identity.
 | Email confirmation and reset codes | Generate six uniformly random digits with twebserver; store session-bound Tink MAC digests and enforce expiry and attempt limits. |
 | Sensitive account fields | Encrypt email, first/last names and authenticator secrets with Tink AEAD and tenant/user/field-bound associated data. |
 | Email lookup | Require persistent `email_hash_salt`; MAC the salt and normalized email with tenant/purpose binding; query the unique `(tenant, email_key)` index. No unsalted fallback. |
+| Registration | Independent expiring records; confirmation atomically promotes one email claim. Username collisions keep the pending code usable while choosing a replacement. Active state and verified email ownership are separate. |
 | Concurrent account changes | Use transactions, checked challenge consumption and user revision checks. |
+| Form CAPTCHA | Optionally require an inline challenge for registration and recovery. By default, show it before the third login password check after two failures from the same IP. Persist scoped counts in SQL and consume each image before business work; a rollback cannot restore it. |
 | Authenticator replay | Persist the last accepted TOTP step and reject reuse across sessions. |
 | Password changes | Require an authenticated session and current password; enforce policy/confirmation; revoke old sessions, rotate this browser, preserve MFA. |
 | SQL session stores | SQLite in LOCAL and PostgreSQL in PROD; borrow the account transaction connection; enforce tenant scope, absolute expiry and revision-checked updates. |

@@ -1,0 +1,228 @@
+# Account failures must remain usable HTML forms without reflecting secrets.
+package require tcltest
+package require web-user
+namespace import ::tcltest::*
+if {![llength [info commands ::authtest::setup]]} {
+    set savedMatch [::tcltest::configure -match]
+    ::tcltest::configure -match __helpers_only__
+    source [file join [file dirname [info script]] auth.test]
+    ::tcltest::configure -match $savedMatch
+}
+
+namespace eval ::formtest {}
+proc ::formtest::check {view status} {
+    set response $::authtest::last
+    if {[dict get $response statusCode] != $status} {error "Expected HTTP $status, got [dict get $response statusCode]"}
+    if {[dict get $response headers content-type] ne "text/html; charset=utf-8"} {error "Expected an HTML form"}
+    if {[dict get $response headers cache-control] ne "no-store"} {error "Account error must not be cached"}
+    if {[dict exists $response headers Location]} {error "Form errors must not redirect"}
+    set body [dict get $response body]
+    if {[string first "action=\"/user/$view" $body] < 0} {error "Missing $view form"}
+    if {[string first {role="status"} $body] < 0} {error "Missing form error message"}
+    return $body
+}
+
+foreach {case threshold address} {known 3 person@example.com unknown 3 nobody@example.com disabled 0 person@example.com} {
+    test form-login-$case {failed login preserves safe fields and destination, and can be retried} -setup {
+        ::authtest::setup LOCAL [dict create bcrypt_cost 4 login_captcha_after $threshold]
+        ::authtest::register
+        ::authtest::call GET /user/login?return_to=%2Fdocs
+    } -body {
+        ::authtest::call POST /user/login?return_to=%2Fdocs [dict create email $address password wrong-password-secret stay_signed_in 1]
+        set body [::formtest::check login 401]
+        set result [list [string match {*Invalid email or password.*} $body] \
+            [expr {[string first "value=\"$address\"" $body] >= 0}] \
+            [regexp {name="stay_signed_in"[^>]* checked} $body] \
+            [expr {[string first wrong-password-secret $body] < 0}] \
+            [string match {*action="/user/login?return_to=%2Fdocs"*} $body] \
+            [expr {[::authtest::me] eq {}}] [::authtest::has_captcha]]
+        lappend result [::authtest::call POST /user/login?return_to=%2Fdocs [::authtest::credentials]] \
+            [dict get $::authtest::last headers Location] [dict get [::authtest::me] email]
+        set result
+    } -cleanup {::authtest::cleanup} -result {1 1 1 1 1 1 0 302 /docs person@example.com}
+}
+
+test form-change-password {wrong current password and mismatched confirmation keep the form and account intact} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+    ::authtest::login
+} -body {
+    set result {}
+    foreach {current confirmation status} [list wrong-current-secret {new password secret} 401 $::authtest::password wrong-confirm-secret 400] {
+        ::authtest::call POST /user/change-password [dict create current_password $current password {new password secret} confirm_password $confirmation]
+        set body [::formtest::check change-password $status]
+        lappend result [expr {[::authtest::me] ne {}}] \
+            [expr {[string first $current $body] < 0 && [string first {new password secret} $body] < 0 && [string first $confirmation $body] < 0}]
+    }
+    lappend result [::authtest::call POST /user/change-password [dict create current_password $::authtest::password password {new password secret} confirm_password {new password secret}]]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 1 200}
+
+test form-forgot-reset {invalid recovery email and reset code keep retryable forms without exposing account existence} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+} -body {
+    ::authtest::call GET /user/forgot
+    ::authtest::call POST /user/forgot {email not-an-email}
+    set body [::formtest::check forgot 400]
+    set result [list [string match {*value="not-an-email"*} $body]]
+    ::authtest::call POST /user/forgot {email nobody@example.com}
+    lappend result [string match {*If the account exists*} [dict get $::authtest::last body]]
+    ::authtest::call POST /user/forgot {email person@example.com}
+    set code [lindex $::authtest::delivered 2]
+    set wrong [expr {$code eq "000000" ? "111111" : "000000"}]
+    ::authtest::call POST /user/reset [dict create code $wrong password {replacement password secret}]
+    set body [::formtest::check reset 400]
+    lappend result [expr {[string first {replacement password secret} $body] < 0}] \
+        [regexp {name="code"[^>]*value=} $body] \
+        [::authtest::call POST /user/reset [dict create code $code password {replacement password secret}]] \
+        [::authtest::call POST /user/login {email person@example.com password {replacement password secret}}]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 0 200 200}
+
+test form-verification {invalid codes and resend cooldown errors return the verification form without losing the challenge} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::call GET /user/register
+    ::authtest::call POST /user/register [::authtest::credentials]
+} -body {
+    set code [lindex $::authtest::delivered 2]
+    set wrong [expr {$code eq "000000" ? "111111" : "000000"}]
+    ::authtest::call POST /user/verify [dict create code $wrong]
+    set body [::formtest::check verify 400]
+    set result [list [regexp {name="code"[^>]*value=} $body]]
+    ::authtest::call POST /user/resend-verification
+    set code [lindex $::authtest::delivered 2]
+    ::authtest::call POST /user/resend-verification
+    set body [::formtest::check verify 429]
+    lappend result [string match {*Reload the form to try again.*} $body] \
+        [::authtest::call POST /user/verify [dict create code $code]]
+    set result
+} -cleanup {::authtest::cleanup} -result {0 1 200}
+
+test form-profile {registration and profile validation retain escaped ordinary fields and can be corrected} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 collect_names true}
+    ::authtest::call GET /user/register
+} -body {
+    set fields [dict merge [::authtest::credentials] {first_name {} last_name {<em>Member</em>}}]
+    ::authtest::call POST /user/register $fields
+    set body [::formtest::check register 400]
+    set result [list [string match {*&lt;em&gt;Member&lt;/em&gt;*} $body] \
+        [expr {[string first $::authtest::password $body] < 0}]]
+    ::authtest::call POST /user/register [dict replace $fields first_name Original last_name Member]
+    ::authtest::call POST /user/verify [dict create code [lindex $::authtest::delivered 2]]
+    ::authtest::login
+    ::authtest::call POST /user/profile {first_name Updated last_name {}}
+    set body [::formtest::check profile 400]
+    lappend result [string match {*name="first_name" value="Updated"*} $body] \
+        [dict get [::authtest::me] first_name] \
+        [::authtest::call POST /user/profile {first_name Updated last_name Member}] \
+        [dict get [::authtest::me] first_name]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 Original 200 Updated}
+
+test form-mfa-management {setup and disable errors preserve the authenticated form without changing MFA settings} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+    ::authtest::login
+} -body {
+    ::authtest::call POST /user/two-factor/setup {operation begin password wrong-password-secret}
+    set body [::formtest::check two-factor/setup 401]
+    set result [list [expr {[string first wrong-password-secret $body] < 0}] [dict get [::authtest::me] mfa_enabled]]
+    ::authtest::call POST /user/two-factor/setup [dict create operation begin password $::authtest::password]
+    set row [::web::user::session $::authtest::store [::authtest::token]]
+    set uid [dict get $row uid]
+    set secret [::web::user::unseal $::authtest::store [dict get $row pending_secret] [list mfa $uid]]
+    ::authtest::call POST /user/two-factor/setup {operation confirm code malformed-code}
+    set body [::formtest::check two-factor/setup 401]
+    lappend result [string match {*name="operation" type="hidden" value="confirm"*} $body] \
+        [regexp {name="code"[^>]*value=} $body]
+    lappend result [::authtest::call POST /user/two-factor/setup [dict create operation confirm code [::web::user::totp_code $::authtest::store $secret]]]
+    set used [dict get [::web::user::user_by_id $::authtest::store $uid] last_step]
+    ::authtest::call POST /user/two-factor/disable [dict create password $::authtest::password code [::tmfa::get_hotp $secret $used 6 SHA1]]
+    set body [::formtest::check two-factor/disable 401]
+    lappend result [dict get [::authtest::me] mfa_enabled] [expr {[string first $::authtest::password $body] < 0}]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 0 1 0 200 1 1}
+
+test form-session-expired {expired protected submissions offer login with a fresh CSRF token and preserve the destination} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+    ::authtest::login
+    ::authtest::call GET /user/change-password
+} -body {
+    set uid [dict get [::authtest::me] id]
+    ::web::user::revoke $::authtest::store $uid
+    ::authtest::call POST /user/change-password [dict create current_password $::authtest::password password {new password secret} confirm_password {new password secret}]
+    set body [::formtest::check login 403]
+    list [string match {*action="/user/login?return_to=%2Fuser%2Fchange-password"*} $body] \
+        [expr {[string first $::authtest::password $body] < 0}] \
+        [::authtest::call POST /user/login?return_to=%2Fuser%2Fchange-password [::authtest::credentials]] \
+        [dict get $::authtest::last headers Location]
+} -cleanup {::authtest::cleanup} -result {1 1 302 /user/change-password}
+
+test form-logout-csrf {a rejected logout keeps the account view and the session, then permits a valid retry} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+    ::authtest::login
+} -body {
+    ::authtest::call POST /user/logout {csrf wrong-token}
+    ::formtest::check logout 403
+    list [expr {[::authtest::me] ne {}}] [::authtest::call POST /user/logout] [::authtest::me]
+} -cleanup {::authtest::cleanup} -result {1 200 {}}
+
+test form-captcha-limit {a CAPTCHA issuance limit returns a form with a reload link and keeps login unauthenticated} -setup {
+    ::authtest::captcha_setup {registration_captcha false login_captcha_after 1 browse_limit 1}
+    ::authtest::call GET /user/login
+} -body {
+    ::authtest::call POST /user/login [dict merge {email nobody@example.com password wrong-password-secret} [::authtest::captcha_fields]]
+    set body [::formtest::check login 429]
+    list [string match {*Reload the form to try again.*} $body] [::authtest::has_captcha] \
+        [regexp {type="submit" disabled} $body] [::authtest::me] \
+        [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]
+} -cleanup {::authtest::captcha_cleanup} -result {1 0 1 {} 1}
+
+foreach {view restart} {verify register reset forgot two-factor login} {
+    test form-expired-$view {an expired challenge offers the starting form with a fresh usable browser session} -setup {
+        ::authtest::setup LOCAL {bcrypt_cost 4}
+        ::authtest::call GET /user/$view
+        set row [::web::user::session $::authtest::store [::authtest::token]]
+        ::tsession::sql::delete [dict get $::authtest::store -sessions] [dict get $row id]
+    } -body {
+        ::authtest::call POST /user/$view {code 000000 password wrong-password-secret}
+        set body [::formtest::check $restart 403]
+        list [expr {[::web::user::session $::authtest::store [::authtest::token]] ne {}}] \
+            [expr {[string first wrong-password-secret $body] < 0}] [::authtest::me]
+    } -cleanup {::authtest::cleanup} -result {1 1 {}}
+}
+
+test form-malformed {body decoding and media-type errors also render the form without reflecting submitted secrets} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::call GET /user/forgot
+} -body {
+    set result {}
+    foreach {type body status} {
+        text/plain submitted-secret 415
+        application/x-www-form-urlencoded {email=%ZZ&password=submitted-secret} 400
+    } {
+        set request [dict create method POST path /user/forgot body $body \
+            headers [dict create cookie $::authtest::cookie content-type $type]]
+        set ::authtest::last [$::authtest::router dispatch $request {addr 127.0.0.1}]
+        set html [::formtest::check forgot $status]
+        lappend result [expr {[string first submitted-secret $html] < 0}]
+    }
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1}
+
+test form-session-limit {an exhausted anonymous-session limit returns HTML without creating more sessions} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 browse_limit 1}
+    ::authtest::call GET /user/login
+    set original [::authtest::token]
+    set ::authtest::cookie {}
+} -body {
+    ::authtest::call POST /user/login {email nobody@example.com password wrong-password-secret}
+    set body [::formtest::check login 429]
+    list [dict exists $::authtest::last headers Set-Cookie] [regexp {type="submit" disabled} $body] \
+        [expr {[::web::user::session $::authtest::store $original] ne {}}] [::authtest::me]
+} -cleanup {::authtest::cleanup} -result {0 1 1 {}}
+
+cleanupTests

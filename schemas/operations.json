@@ -31,6 +31,23 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 100
+              },
+              "captcha_id": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "captcha_answer": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "username": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 32
               }
             },
             "required": [
@@ -64,6 +81,11 @@
                 "minLength": 6,
                 "maxLength": 6,
                 "pattern": "^[0-9]{6}$"
+              },
+              "username": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 32
               }
             },
             "required": [
@@ -98,6 +120,20 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 72
+              },
+              "captcha_id": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "captcha_answer": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "stay_signed_in": {
+                "type": "string",
+                "enum": [
+                  "1"
+                ]
               }
             },
             "required": [
@@ -128,6 +164,14 @@
                 "type": "string",
                 "minLength": 3,
                 "maxLength": 254
+              },
+              "captcha_id": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "captcha_answer": {
+                "type": "string",
+                "maxLength": 64
               }
             },
             "required": [
@@ -348,6 +392,15 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 100
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "username": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 32
               }
             },
             "required": [
@@ -395,6 +448,58 @@
               "current_password",
               "password",
               "confirm_password"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "close-account": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "current_password": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 72
+              }
+            },
+            "required": [
+              "csrf",
+              "current_password"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "resend-verification": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "csrf"
             ],
             "additionalProperties": false
           }

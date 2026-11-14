@@ -1,3 +1,10 @@
+#
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+#
+
+# Validate configuration and mount the account routes and templates.
 proc ::web::user::mount {router args} {
     variable root
     set config [options {-store {} -config {}} {*}$args]
@@ -34,8 +41,8 @@ proc ::web::user::mount {router args} {
     dict set config -operations [request_operations $store]
     validate_email_config $config
     # Check collisions before installing any route.
-    foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/login \
-        $prefix/forgot $prefix/reset $prefix/change-password $prefix/two-factor $prefix/two-factor/setup \
+    foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/resend-verification $prefix/login \
+        $prefix/forgot $prefix/reset $prefix/change-password $prefix/close-account $prefix/two-factor $prefix/two-factor/setup \
         $prefix/two-factor/disable $prefix/logout $prefix/profile] {
         if {[dict get [$router match GET $path] statusCode] != 404} {error "route already mounted: $path"}
     }
@@ -43,14 +50,16 @@ proc ::web::user::mount {router args} {
     $router add GET $prefix/ [list ::web::user::account $config] -strict true
     $router add {GET POST} $prefix/register [list ::web::user::register $config] -strict true
     $router add {GET POST} $prefix/verify [list ::web::user::verify $config] -strict true
+    $router add POST $prefix/resend-verification [list ::web::user::resend_verification $config] -strict true
     $router add {GET POST} $prefix/login [list ::web::user::login $config] -strict true
     $router add {GET POST} $prefix/forgot [list ::web::user::forgot $config] -strict true
     $router add {GET POST} $prefix/reset [list ::web::user::reset $config] -strict true
     $router add {GET POST} $prefix/change-password [list ::web::user::change_password $config] -strict true
+    $router add {GET POST} $prefix/close-account [list ::web::user::close_account $config] -strict true
     $router add {GET POST} $prefix/two-factor [list ::web::user::two_factor $config] -strict true
     $router add {GET POST} $prefix/two-factor/setup [list ::web::user::two_factor_setup $config] -strict true
     $router add {GET POST} $prefix/two-factor/disable [list ::web::user::two_factor_disable $config] -strict true
-    if {[property $store collect_names]} {
+    if {[property $store collect_names] || [property $store collect_display_name] || [property $store collect_username]} {
         $router add {GET POST} $prefix/profile [list ::web::user::profile $config] -strict true
     }
     $router add POST $prefix/logout [list ::web::user::logout $config] -strict true

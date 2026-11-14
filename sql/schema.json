@@ -43,6 +43,14 @@
         "created_at": {
           "type": "bigint",
           "not_null": true
+        },
+        "active": {
+          "type": "integer",
+          "not_null": true,
+          "default": 0
+        },
+        "username": {
+          "type": "text"
         }
       },
       "primary_key": [
@@ -54,6 +62,16 @@
           "tenant",
           "email_key"
         ]
+      ],
+      "indexes": [
+        {
+          "name": "web_user_username",
+          "columns": [
+            "tenant",
+            "username"
+          ],
+          "unique": true
+        }
       ]
     },
     {
@@ -74,6 +92,9 @@
         "last_name": {
           "type": "text",
           "not_null": true
+        },
+        "display_name": {
+          "type": "text"
         }
       },
       "primary_key": [
@@ -113,6 +134,90 @@
             "expires"
           ]
         }
+      ]
+    },
+    {
+      "name": "web_user_registrations",
+      "columns": {
+        "tenant": {
+          "type": "text",
+          "not_null": true
+        },
+        "id": {
+          "type": "text",
+          "not_null": true
+        },
+        "email_key": {
+          "type": "text",
+          "not_null": true
+        },
+        "email": {
+          "type": "text",
+          "not_null": true
+        },
+        "password": {
+          "type": "text",
+          "not_null": true
+        },
+        "first_name": {
+          "type": "text",
+          "not_null": true
+        },
+        "last_name": {
+          "type": "text",
+          "not_null": true
+        },
+        "created_at": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "expires": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "display_name": {
+          "type": "text"
+        },
+        "username": {
+          "type": "text"
+        }
+      },
+      "primary_key": [
+        "tenant",
+        "id"
+      ],
+      "indexes": [
+        {
+          "name": "web_user_registrations_email",
+          "columns": [
+            "tenant",
+            "email_key",
+            "expires"
+          ]
+        },
+        {
+          "name": "web_user_registrations_expiry",
+          "columns": [
+            "tenant",
+            "expires"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "web_user_migrations",
+      "columns": {
+        "name": {
+          "type": "text",
+          "not_null": true
+        },
+        "applied_at": {
+          "type": "bigint",
+          "not_null": true
+        }
+      },
+      "primary_key": [
+        "name"
       ]
     }
   ]

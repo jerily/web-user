@@ -1,3 +1,9 @@
+#
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+#
+
 # Widget callback: properties request context -> trusted, escaped HTML fragment.
 # Bind the mount and widget name in the host; consumers do not load our templates.
 proc ::web::user::widget {config name properties request context} {

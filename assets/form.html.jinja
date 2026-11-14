@@ -1,31 +1,41 @@
 {% extends "page.html.jinja" %}
 {% block body %}
-<section class="account-panel">
-<h1>{{ title }}</h1>
+<section class="account-panel" aria-labelledby="account-title">
+<h1 id="account-title">{{ title }}</h1>
 {% if message %}<p role="status">{{ message }}</p>{% endif %}
+{% if reload_form %}<p><a href="{{ prefix }}/{{ view }}{{ return_query }}">Reload the form to try again.</a></p>{% endif %}
 {% if debug_code %}<aside class="local-code"><strong>LOCAL development code</strong><code id="local-code">{{ debug_code }}</code></aside>{% endif %}
 {% if view == "account" %}
-<p>Signed in as {{ email }}</p>
+<p class="account-identity">Signed in as <strong>{{ email }}</strong></p>
+{% if email_verified %}<p class="account-verified">Email verified</p>{% else %}<p>Your email is not verified yet.</p>{% if verification_emails_enabled %}<form method="post" action="{{ prefix }}/resend-verification{{ return_query }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-secondary" type="submit">Verify email</button></form>{% endif %}{% endif %}
 <p><a href="{{ prefix }}/change-password">Change password</a></p>
-{% if collect_names %}<p>{{ first_name }} {{ last_name }} · <a href="{{ prefix }}/profile">Edit profile</a></p>{% endif %}
-{% if mfa_enabled %}<p>Authenticator enabled.</p><a href="{{ prefix }}/two-factor/disable">Disable authenticator</a>{% else %}<p>Add an authenticator app to protect your account.</p><a href="{{ prefix }}/two-factor/setup">Set up authenticator</a>{% endif %}
-<form method="post" action="{{ prefix }}/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Sign out</button></form>
+{% if collect_profile %}<p>{{ display_name }}{% if username %} · @{{ username }}{% endif %} · <a href="{{ prefix }}/profile">Edit profile</a></p>{% endif %}
+{% if mfa_enabled %}<p>Authenticator enabled.</p><a href="{{ prefix }}/two-factor/disable">Disable authenticator</a>{% elif email_verified %}<p>Add an authenticator app to protect your account.</p><a href="{{ prefix }}/two-factor/setup">Set up authenticator</a>{% endif %}
+<form method="post" action="{{ prefix }}/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-secondary" type="submit">Sign out</button></form>
+<p><a class="account-danger" href="{{ prefix }}/close-account">Close account</a></p>
 {% else %}
-<form method="post" action="{{ prefix }}/{{ view }}">
+<form method="post" action="{{ prefix }}/{{ view }}{{ return_query }}">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 {% if view == "register" or view == "login" or view == "forgot" %}
-<label>Email <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+<label>Email <input name="email" type="email" value="{{ email }}" autocomplete="email" maxlength="254" required></label>
 {% endif %}
 {% if collect_names and (view == "register" or view == "profile") %}
 <label>First name <input name="first_name" value="{{ first_name }}" autocomplete="given-name" maxlength="100" required></label>
 <label>Last name <input name="last_name" value="{{ last_name }}" autocomplete="family-name" maxlength="100" required></label>
-<p>Your first name is used as your public display name. Your last name stays private.</p>
+<p>{% if collect_display_name %}Your first name is used when you leave your display name blank.{% else %}Your first name is used as your public display name.{% endif %} Your last name stays private.</p>
 {% endif %}
-{% if view == "change-password" %}
+{% if view == "register" or view == "profile" %}
+{% if collect_display_name %}<label>Display name (optional) <input name="display_name" value="{{ display_name }}" autocomplete="nickname" maxlength="80"></label><p>Your public name. It does not need to be unique.</p>{% endif %}
+{% if collect_username %}<label>Username <input name="username" value="{{ username }}" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_]{2,31}" required></label><p>A unique public handle. You will still sign in with your email.</p>{% endif %}
+{% endif %}
+{% if view == "close-account" %}
+<p>This permanently deletes your account and profile and signs you out on every device. This cannot be undone.</p>
+{% endif %}
+{% if view == "change-password" or view == "close-account" %}
 <label>Current password <input name="current_password" type="password" autocomplete="current-password" required></label>
 {% endif %}
 {% if view == "register" or view == "reset" or view == "change-password" %}
-<label>New password <input name="password" type="password" autocomplete="new-password" minlength="{{ password_min_length }}" required></label><p>Use at least {{ password_min_length }} characters and at most 72 UTF-8 bytes.</p>
+<label>New password <input name="password" type="password" autocomplete="new-password" minlength="{{ password_min_length }}" required></label><p>Use at least {{ password_min_length }} characters.</p>
 {% endif %}
 {% if view == "change-password" %}
 <label>Confirm new password <input name="confirm_password" type="password" autocomplete="new-password" minlength="{{ password_min_length }}" required></label>
@@ -33,8 +43,18 @@
 {% if view == "login" or view == "two-factor/disable" %}
 <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
 {% endif %}
+{% if view == "login" %}
+<label class="account-remember">
+<input type="checkbox" name="stay_signed_in" value="1" aria-labelledby="stay-signed-in-label" aria-describedby="stay-signed-in-help"{% if stay_signed_in %} checked{% endif %}>
+<span><strong id="stay-signed-in-label">Stay signed in</strong><span id="stay-signed-in-help" class="account-remember-hint">Keep me signed in on this device.</span></span>
+</label>
+{% endif %}
 {% if view == "verify" or view == "reset" or view == "two-factor" or view == "two-factor/disable" %}
 <label>Code <input name="code"{% if view == "verify" or view == "reset" %} inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6"{% endif %} autocomplete="one-time-code" required></label>
+{% endif %}
+{% if view == "verify" and username_conflict %}
+<label>Choose another username <input name="username" value="{{ username }}" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_]{2,31}" required></label>
+<p>Your registration is saved. Enter the same verification code with your new username.</p>
 {% endif %}
 {% if view == "two-factor/setup" %}
 {% if qr %}
@@ -45,9 +65,23 @@
 <p>Confirm your password to set up an authenticator.</p><input name="operation" type="hidden" value="begin"><label>Password <input name="password" type="password" autocomplete="current-password" required></label>
 {% endif %}
 {% endif %}
-<button type="submit">Continue</button>
+{% if captcha_png %}
+<div class="captcha">
+<p>Enter the {{ captcha_length }} {% if captcha_letters %}characters{% else %}digits{% endif %} shown below.{% if captcha_letters %} Uppercase and lowercase answers are accepted.{% endif %}</p>
+<img src="data:image/png;base64,{{ captcha_png }}" alt="CAPTCHA. Enter the {{ captcha_length }} {% if captcha_letters %}characters{% else %}digits{% endif %} shown in this image.">
+<input type="hidden" name="captcha_id" value="{{ captcha_id }}">
+<label>{% if captcha_letters %}Characters{% else %}Digits{% endif %} in the image <input name="captcha_answer" type="text"{% if not captcha_letters %} inputmode="numeric" pattern="[0-9]+"{% endif %} autocomplete="off" autocapitalize="characters" spellcheck="false" minlength="{{ captcha_length }}" maxlength="{{ captcha_length }}" required></label>
+<p><a href="{{ prefix }}/{{ view }}{{ return_query }}">Try another image</a></p>
+</div>
+{% endif %}
+<button class="account-button{% if view == "close-account" %} account-button-danger{% endif %}" type="submit"{% if reload_form %} disabled{% endif %}>{% if view == "register" %}Create account{% elif view == "login" %}Sign in{% elif view == "forgot" %}Send reset code{% elif view == "reset" or view == "change-password" %}Change password{% elif view == "close-account" %}Close account{% elif view == "verify" %}Verify email{% elif view == "profile" %}Save changes{% else %}Continue{% endif %}</button>
 </form>
-{% if view == "login" %}<p><a href="{{ prefix }}/forgot">Forgot password?</a> · <a href="{{ prefix }}/register">Create an account</a></p>{% endif %}
+{% if view == "close-account" %}<p><a href="{{ prefix }}">Cancel</a></p>{% endif %}
+{% if view == "verify" %}
+{% if verification_emails_enabled %}<form class="account-resend" method="post" action="{{ prefix }}/resend-verification{{ return_query }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-secondary" type="submit">Send a new code</button></form>{% endif %}
+<p><a href="{{ prefix }}/login{{ return_query }}">Back to sign in</a></p>
+{% endif %}
+{% if view == "login" %}<p><a href="{{ prefix }}/forgot{{ return_query }}">Forgot password?</a> · <a href="{{ prefix }}/register{{ return_query }}">Create an account</a></p>{% endif %}
 {% endif %}
 </section>
 {% endblock %}

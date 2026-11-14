@@ -65,9 +65,9 @@ set html [::web::user::widget $accounts profile \
 ```
 
 `profile` accepts only `user_id`. It resolves that ID in the account mount's
-own tenant and supplies the first name to `profile.html.jinja` as `display_name`.
-The result is a small escaped name label. Missing users, unverified users and
-users without names display `Member`. Email, surname and credentials are never
+own tenant and supplies `display_name` and the public `username` to the template.
+The display name falls back from an explicit public name to the first name, then
+`Member`. Missing or inactive users display `Member`. Email, surname and credentials are never
 included in the widget's template data. Unknown widget names are errors.
 
 The host may override `profile.html.jinja` through the account mount's existing
@@ -81,7 +81,8 @@ Set `collect_names true` in the web-user store configuration. It defaults to
 false. When enabled, registration requires both names, each trimmed and limited
 to 100 characters without control characters. Unicode and punctuation are
 accepted. When disabled, the registration form omits names and the server rejects
-submitted name fields; the profile-edit endpoint is not mounted.
+submitted first/last-name fields. The profile-edit endpoint is mounted when any
+of `collect_names`, `collect_display_name`, or `collect_username` is enabled.
 
 For example-community, tconfig reads this from `config.ini`:
 
@@ -101,3 +102,7 @@ LOCAL example-community initializes the schema automatically; for PROD run the
 explicit `--initdb true` maintenance step before starting workers. Members without
 names use `Member` until names are saved. See [MOUNTING.md](MOUNTING.md#store-configuration)
 for the required email salt and current storage format.
+
+`collect_display_name` permits a blank value, stored as SQL NULL. Explicit public
+names need not be unique. `collect_username` requires a 3–32 character handle,
+normalized to lowercase and unique per tenant. Both properties default to false.
