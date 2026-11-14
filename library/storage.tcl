@@ -1,3 +1,8 @@
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+
+# Merge supported options with their defaults.
 proc ::web::user::options {defaults args} {
     if {[llength $args] % 2} {error "options must be name/value pairs"}
     foreach {key value} $args {
@@ -24,26 +29,12 @@ proc ::web::user::connect {config} {
     }
     db_connect -dialect postgresql -autobegin 0 {*}$pg
 }
+# Initialize the selected session store and account schema.
 proc ::web::user::initdb {connection} {
+    variable root
     set backend [session_backend]
     ${backend}::initdb $connection
-    foreach {table columns primary} {
-        web_user_users {
-            tenant text id text email_key text email text password text verified integer
-            mfa_secret text last_step bigint revision integer created_at bigint
-        } {tenant id}
-        web_user_profiles {tenant text id text first_name text last_name text} {tenant id}
-        web_user_limits {tenant text id text hits integer expires bigint} {tenant id}
-    } {
-        set fields {}
-        foreach {name type} $columns {dict set fields $name [dict create type $type not_null 1]}
-        set definition [db_define_table $table $fields -primary_key $primary]
-        if {$table eq "web_user_users"} {
-            set definition [db_define_table $table $fields -primary_key $primary -unique {{tenant email_key}}]
-        }
-        db_create_table $connection $definition -if_not_exists 1
-    }
-    db_create_index $connection web_user_limits_expiry web_user_limits {tenant expires} -if_not_exists 1
+    db_apply_schema $connection [file join $root sql schema.json] -additive true
 }
 proc ::web::user::create {args} {
     set config [options {-connection {} -config {}} {*}$args]

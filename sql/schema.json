@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "tables": [
+    {
+      "name": "web_user_users",
+      "columns": {
+        "tenant": {
+          "type": "text",
+          "not_null": true
+        },
+        "id": {
+          "type": "text",
+          "not_null": true
+        },
+        "email_key": {
+          "type": "text",
+          "not_null": true
+        },
+        "email": {
+          "type": "text",
+          "not_null": true
+        },
+        "password": {
+          "type": "text",
+          "not_null": true
+        },
+        "verified": {
+          "type": "integer",
+          "not_null": true
+        },
+        "mfa_secret": {
+          "type": "text",
+          "not_null": true
+        },
+        "last_step": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "revision": {
+          "type": "integer",
+          "not_null": true
+        },
+        "created_at": {
+          "type": "bigint",
+          "not_null": true
+        }
+      },
+      "primary_key": [
+        "tenant",
+        "id"
+      ],
+      "unique": [
+        [
+          "tenant",
+          "email_key"
+        ]
+      ]
+    },
+    {
+      "name": "web_user_profiles",
+      "columns": {
+        "tenant": {
+          "type": "text",
+          "not_null": true
+        },
+        "id": {
+          "type": "text",
+          "not_null": true
+        },
+        "first_name": {
+          "type": "text",
+          "not_null": true
+        },
+        "last_name": {
+          "type": "text",
+          "not_null": true
+        }
+      },
+      "primary_key": [
+        "tenant",
+        "id"
+      ]
+    },
+    {
+      "name": "web_user_limits",
+      "columns": {
+        "tenant": {
+          "type": "text",
+          "not_null": true
+        },
+        "id": {
+          "type": "text",
+          "not_null": true
+        },
+        "hits": {
+          "type": "integer",
+          "not_null": true
+        },
+        "expires": {
+          "type": "bigint",
+          "not_null": true
+        }
+      },
+      "primary_key": [
+        "tenant",
+        "id"
+      ],
+      "indexes": [
+        {
+          "name": "web_user_limits_expiry",
+          "columns": [
+            "tenant",
+            "expires"
+          ]
+        }
+      ]
+    }
+  ]
+}
