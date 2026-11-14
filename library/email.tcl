@@ -1,8 +1,19 @@
+#
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+#
+
 # SES is opt-in and runs after the account transaction commits. Credentials
 # come from the AWS provider chain, never from account/site form fields.
 proc ::web::user::validate_email_config {config} {
     set settings [dict get $config -config]
     if {![string is boolean -strict [dict get $settings email_enabled]]} {error "email_enabled must be a boolean"}
+    set store [dict get $config -store]
+    if {[dict get $store -env] eq "PROD" && [property $store email_verification_required] &&
+        (![dict get $settings email_enabled] || ![property $store verification_emails_enabled])} {
+        error "Required email verification needs email_enabled and verification_emails_enabled in PROD"
+    }
     if {![dict get $settings email_enabled] || [dict get $config -deliver] ne {} ||
         [dict get $config -store -env] ne "PROD"} {return}
     if {[dict get $settings email_from] eq {}} {error "email_from is required when PROD email is enabled"}
@@ -13,10 +24,12 @@ proc ::web::user::validate_email_config {config} {
     package require awsses 1.0.16
 }
 
+# Build a credential-free account security notification.
 proc ::web::user::notification {store user purpose} {
     list $purpose [unseal $store [dict get $user email] [list email [dict get $user id]]] {}
 }
 
+# Format the selected account email and its expiry instructions.
 proc ::web::user::email_message {config purpose destination code} {
     set settings [dict get $config -config]
     set site [dict get $settings title]
@@ -44,6 +57,9 @@ proc ::web::user::email_message {config purpose destination code} {
         }
         default {error "unknown account email purpose"}
     }
+    if {[dict exists $settings issuer] && [dict get $settings issuer] ne {}} {
+        set subject "[dict get $settings issuer]: $subject"
+    }
     if {$purpose in {verify reset}} {
         append text "\n\nThis code expires in [property [dict get $config -store] code_ttl] seconds. Never share it."
     } else {
@@ -52,8 +68,10 @@ proc ::web::user::email_message {config purpose destination code} {
     return [dict create from [dict get $settings email_from] to [list $destination] subject $subject text $text]
 }
 
+# Send enabled account messages using the host transport or SES.
 proc ::web::user::deliver {config purpose destination code} {
     if {![dict get $config -config email_enabled]} {return}
+    if {$purpose eq "verify" && ![property [dict get $config -store] verification_emails_enabled]} {return}
     if {[dict get $config -deliver] ne {}} {
         {*}[dict get $config -deliver] $purpose $destination $code
         return
@@ -64,6 +82,7 @@ proc ::web::user::deliver {config purpose destination code} {
     try {$client send_email $message} finally {$client destroy}
 }
 
+# Attempt delivery without rolling back committed account changes.
 proc ::web::user::deliver_after_commit {config delivery} {
     if {$delivery eq {}} {return}
     if {[catch {deliver $config {*}$delivery}]} {

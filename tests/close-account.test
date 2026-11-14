@@ -1,0 +1,177 @@
+# Account closure requires fresh credentials and atomically removes only its owner.
+package require tcltest
+package require web-user
+namespace import ::tcltest::*
+if {![llength [info commands ::authtest::setup]]} {
+    set savedMatch [::tcltest::configure -match]
+    ::tcltest::configure -match __helpers_only__
+    source [file join [file dirname [info script]] auth.test]
+    ::tcltest::configure -match $savedMatch
+}
+
+namespace eval ::closetest {}
+proc ::closetest::seed {} {
+    set store $::authtest::store
+    set uid [dict get [::authtest::me] id]
+    ::web::user::save_profile $store $uid {first_name Test last_name Member display_name Tester}
+    set user [::web::user::user_by_id $store $uid]
+    set pending [dict create id pending-close email_key [dict get $user email_key] \
+        email [dict get $user email] password [dict get $user password] username {} \
+        first_name {} last_name {} display_name {} created_at [clock seconds] expires [expr {[clock seconds] + 900}]]
+    ::web::user::insert $store web_user_registrations $pending
+    set tokens [list [::authtest::token] [::web::user::new_session $store verify pending-close 123456]]
+    foreach kind {auth reset two-factor verify-email} {
+        lappend tokens [::web::user::new_session $store $kind $uid 123456]
+    }
+    return [dict create uid $uid tokens $tokens]
+}
+
+foreach mode {LOCAL PROD} {
+    set constraint [expr {$mode eq "PROD" ? "postgres" : {}}]
+    test close-account-success-$mode {closure removes credentials/profile/pending signups and every session, and permits a fresh signup} -constraints $constraint -setup {
+        ::authtest::setup $mode {bcrypt_cost 4}
+        ::authtest::register
+        ::authtest::login
+        ::authtest::setup_mfa
+        set seeded [::closetest::seed]
+    } -body {
+        set store $::authtest::store
+        set uid [dict get $seeded uid]
+        set result [list [::authtest::call GET /user] \
+            [string match {*class="account-danger" href="/user/close-account">Close account*} [dict get $::authtest::last body]] \
+            [::authtest::call GET /user/close-account] \
+            [string match {*autocomplete="current-password" required*} [dict get $::authtest::last body]] \
+            [expr {[::authtest::me] ne {}}]]
+        lappend result [::authtest::call POST /user/close-account [dict create current_password $::authtest::password]] \
+            [string match {*Your account has been closed.*action="/user/login"*} [dict get $::authtest::last body]] \
+            [expr {[::authtest::me] eq {}}] \
+            [expr {[::web::user::user_by_id $store $uid] eq {}}] \
+            [expr {[::web::user::one $store web_user_profiles [dict create id $uid]] eq {}}] \
+            [expr {[::web::user::rows $store web_user_registrations] eq {}}]
+        foreach token [dict get $seeded tokens] {
+            if {[::web::user::session $store $token] ne {}} {error "Closure left an old session usable"}
+        }
+        lappend result [dict get [::web::user::session $store [::authtest::token]] kind] \
+            [::authtest::login]
+        ::authtest::register
+        lappend result [::authtest::login] [expr {[dict get [::authtest::me] id] ne $uid}]
+        set result
+    } -cleanup {::authtest::cleanup} -result {200 1 200 1 1 200 1 1 1 1 1 anon 401 200 1}
+
+    test close-account-rollback-$mode {a storage failure rolls back account/profile deletion and all revoked challenges} -constraints $constraint -setup {
+        ::authtest::setup $mode {bcrypt_cost 4}
+        ::authtest::register
+        ::authtest::login
+        set seeded [::closetest::seed]
+        rename ::web::user::new_session ::web::user::close_saved_new_session
+        proc ::web::user::new_session {args} {error "injected closure write failure"}
+    } -body {
+        set store $::authtest::store
+        set uid [dict get $seeded uid]
+        set before [::web::user::user_by_id $store $uid]
+        set result [list [catch {::authtest::call POST /user/close-account [dict create current_password $::authtest::password]} message] \
+            $message [expr {[::web::user::user_by_id $store $uid] eq $before}] \
+            [expr {[::web::user::one $store web_user_profiles [dict create id $uid]] ne {}}] \
+            [expr {[::web::user::registration $store pending-close] ne {}}]]
+        foreach token [dict get $seeded tokens] {
+            if {[::web::user::session $store $token] eq {}} {error "Rollback lost a session"}
+        }
+        set result
+    } -cleanup {
+        rename ::web::user::new_session {}
+        rename ::web::user::close_saved_new_session ::web::user::new_session
+        ::authtest::cleanup
+    } -result {1 {injected closure write failure} 1 1 1}
+}
+
+test close-account-validation {wrong/missing passwords, invalid CSRF and foreign origins preserve the account and redisplay HTML} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 account_limit 100}
+    ::authtest::register
+    ::authtest::login
+} -body {
+    set store $::authtest::store
+    set uid [dict get [::authtest::me] id]
+    set before [::web::user::user_by_id $store $uid]
+    set fields [dict create current_password $::authtest::password]
+    set result {}
+    foreach submitted [list [dict replace $fields csrf wrong] {} {current_password {}} \
+            {current_password wrong-password-secret} [dict create current_password [string repeat x 73]] \
+            [dict merge $fields {uid another-account}]] {
+        lappend result [::authtest::call POST /user/close-account $submitted]
+        set response $::authtest::last
+        set body [dict get $response body]
+        if {[dict get $response headers content-type] ne "text/html; charset=utf-8" ||
+            ![string match {*action="/user/close-account"*} $body] ||
+            [string match {*wrong-password-secret*} $body] || [string first $::authtest::password $body] >= 0} {
+            error "Closure error did not preserve a usable form without secrets"
+        }
+    }
+    lappend result [::authtest::call POST /user/close-account $fields {origin https://foreign.test}] \
+        [expr {[::web::user::user_by_id $store $uid] eq $before}] [expr {[::authtest::me] ne {}}] \
+        [::authtest::call POST /user/close-account $fields]
+    set result
+} -cleanup {::authtest::cleanup} -result {403 400 400 401 400 400 403 1 1 200}
+
+test close-account-authentication {anonymous, recovery-only and pending MFA sessions cannot close accounts even with the password} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+    ::authtest::login
+    ::authtest::setup_mfa
+} -body {
+    set uid [dict get [::authtest::me] id]
+    set store $::authtest::store
+    set result {}
+    foreach kind {anon reset two-factor verify-email} {
+        set token [::web::user::new_session $store $kind $uid 123456]
+        set issued [::web::user::set_cookie $::authtest::config [::web::user::response 200 {}] $token]
+        set ::authtest::cookie [lindex [split [dict get $issued headers Set-Cookie] {;}] 0]
+        set ::authtest::csrf [::web::user::csrf_token $::authtest::config $token]
+        lappend result [::authtest::call GET /user/close-account] \
+            [dict get $::authtest::last headers Location] \
+            [::authtest::call POST /user/close-account [dict create current_password $::authtest::password]] \
+            [string match {*action="/user/login?return_to=%2Fuser%2Fclose-account"*} [dict get $::authtest::last body]]
+    }
+    if {[::web::user::user_by_id $store $uid] eq {}} {error "Unauthenticated closure deleted the account"}
+    lsort -unique $result
+} -cleanup {::authtest::cleanup} -result {/user/login?return_to=%2Fuser%2Fclose-account 1 302 401}
+
+test close-account-throttle {wrong passwords consume the account attempt limit} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 account_limit 2}
+    ::authtest::register
+    ::authtest::login
+} -body {
+    list [::authtest::call POST /user/close-account {current_password wrong}] \
+        [::authtest::call POST /user/close-account {current_password wrong}] \
+        [::authtest::call POST /user/close-account [dict create current_password $::authtest::password]] \
+        [expr {[::authtest::me] ne {}}]
+} -cleanup {::authtest::cleanup} -result {401 401 429 1}
+
+test close-account-isolation {closing one account preserves another user and the same identifiers in another tenant} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+    ::authtest::login
+    set seeded [::closetest::seed]
+} -body {
+    set store $::authtest::store
+    set uid [dict get $seeded uid]
+    set user [::web::user::user_by_id $store $uid]
+    set otherUser [dict replace $user id other-user email_key other-email]
+    ::web::user::insert $store web_user_users $otherUser
+    ::web::user::save_profile $store other-user {first_name Other last_name User display_name Other}
+    set otherToken [::web::user::new_session $store auth other-user]
+    set tenant [::web::user::create -connection $::authtest::db -config [dict replace [dict get $store -config] tenant other-tenant]]
+    ::web::user::insert $tenant web_user_users $user
+    ::web::user::insert $tenant web_user_profiles [::web::user::one $store web_user_profiles [dict create id $uid]]
+    ::web::user::insert $tenant web_user_registrations [::web::user::registration $store pending-close]
+    set tenantToken [::web::user::new_session $tenant auth $uid]
+    list [::authtest::call POST /user/close-account [dict create current_password $::authtest::password]] \
+        [expr {[::web::user::user_by_id $store other-user] eq $otherUser}] \
+        [expr {[::web::user::one $store web_user_profiles {id other-user}] ne {}}] \
+        [expr {[::web::user::session $store $otherToken] ne {}}] \
+        [expr {[::web::user::user_by_id $tenant $uid] ne {}}] \
+        [expr {[::web::user::one $tenant web_user_profiles [dict create id $uid]] ne {}}] \
+        [expr {[::web::user::registration $tenant pending-close] ne {}}] \
+        [expr {[::web::user::session $tenant $tenantToken] ne {}}]
+} -cleanup {::authtest::cleanup} -result {200 1 1 1 1 1 1 1}
+
+cleanupTests

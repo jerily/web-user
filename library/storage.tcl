@@ -1,6 +1,8 @@
+#
 # Copyright Jerily LTD. All Rights Reserved.
 # SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
 # SPDX-License-Identifier: MIT.
+#
 
 # Merge supported options with their defaults.
 proc ::web::user::options {defaults args} {
@@ -11,6 +13,7 @@ proc ::web::user::options {defaults args} {
     }
     return $defaults
 }
+# Require an explicit supported deployment environment.
 proc ::web::user::environment {} {
     if {![info exists ::env(ENV)] || $::env(ENV) ni {LOCAL PROD}} {error "ENV must be LOCAL or PROD"}
     return $::env(ENV)
@@ -35,10 +38,13 @@ proc ::web::user::initdb {connection} {
     set backend [session_backend]
     ${backend}::initdb $connection
     db_apply_schema $connection [file join $root sql schema.json] -additive true
+    migrate_registrations $connection
 }
+# Validate account policy and borrow the host SQL connection.
 proc ::web::user::create {args} {
     set config [options {-connection {} -config {}} {*}$args]
     set settings [settings [dict get $config -config]]
+    if {[dict get $settings registration_captcha] || [dict get $settings login_captcha_after] > 0} {package require tcaptcha 0.1.0}
     foreach key {tenant aead mac} {
         dict set config -$key [dict get $settings $key]
     }
@@ -54,26 +60,38 @@ proc ::web::user::create {args} {
     tag $config probe check
     return $config
 }
+# Build a typed tenant-scoped SQL filter.
 proc ::web::user::predicate {store where} {
     set terms [list [db_eq [db_col tenant] [db_value [dict get $store -tenant] -type text]]]
     dict for {key value} $where {lappend terms [db_eq [db_col $key] [db_value $value -type [column_type $key]]]}
     db_and {*}$terms
 }
+# Read tenant-scoped rows and normalize nullable profile fields.
 proc ::web::user::rows {store table {where {}}} {
-    dict get [db_execute [dict get $store -connection] [db_where [db_select $table] [predicate $store $where]]] rows
+    set result [dict get [db_execute [dict get $store -connection] [db_where [db_select $table] [predicate $store $where]]] rows]
+    set defaults {}
+    if {$table in {web_user_users web_user_registrations}} {dict set defaults username {}}
+    if {$table in {web_user_profiles web_user_registrations}} {dict set defaults display_name {}}
+    lmap row $result {dict merge $defaults $row}
 }
+# Return the first matching tenant-scoped row.
 proc ::web::user::one {store table where} {lindex [rows $store $table $where] 0}
+# Insert a row with explicit tenant and SQL parameter types.
 proc ::web::user::insert {store table values} {
     dict set values tenant [dict get $store -tenant]
     db_execute [dict get $store -connection] [db_values [db_insert $table] [typed_values $values] -expressions]
 }
+# Update matching tenant-scoped rows and return the affected count.
 proc ::web::user::update {store table where values} {
     dict get [db_execute [dict get $store -connection] [db_where [db_values [db_update $table] [typed_values $values] -expressions] [predicate $store $where]]] rowcount
 }
+# Delete matching tenant-scoped rows and return the affected count.
 proc ::web::user::remove {store table where} {
     dict get [db_execute [dict get $store -connection] [db_where [db_delete $table] [predicate $store $where]]] rowcount
 }
+# Find an account by its tenant-scoped identifier.
 proc ::web::user::user_by_id {store id} {one $store web_user_users [dict create id $id]}
+# Find an account through the keyed normalized-email index.
 proc ::web::user::user_by_email {store address} {
     one $store web_user_users [dict create email_key [email_key $store $address]]
 }
@@ -85,18 +103,17 @@ proc ::web::user::save_user {store user changes} {
     }
     dict merge $user $changes
 }
-proc ::web::user::prune {store} {
-    ::tsession::sql::prune [dict get $store -sessions]
-    db_execute [dict get $store -connection] [db_where [db_delete web_user_limits] \
-        [db_and [predicate $store {}] [db_le [db_col expires] [db_value [clock seconds] -type bigint]]]]
-}
-
 # TDBC must not infer byte arrays (hex/MAC values) as BLOBs for text columns.
 proc ::web::user::column_type {name} {
-    expr {$name in {verified last_step revision created_at expires attempts hits} ? "bigint" : "text"}
+    expr {$name in {active verified last_step revision created_at expires applied_at attempts hits} ? "bigint" : "text"}
 }
+# Bind SQL values explicitly, preserving nullable profile fields.
 proc ::web::user::typed_values {values} {
     set result {}
-    dict for {key value} $values {dict set result $key [db_value $value -type [column_type $key]]}
+    dict for {key value} $values {
+        if {$key in {username display_name} && $value eq {}} {dict set result $key [db_null]} else {
+            dict set result $key [db_value $value -type [column_type $key]]
+        }
+    }
     return $result
 }

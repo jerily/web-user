@@ -1,3 +1,9 @@
+#
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+#
+
 # Load inline OpenAPI operations once per mount. Override only numeric limits
 # from validated site configuration; keep the schemas as ordinary JSON files.
 proc ::web::user::read_operations {filename overrides} {
@@ -16,17 +22,32 @@ proc ::web::user::read_operations {filename overrides} {
         return $operations
     } finally {::tjson::destroy $document}
 }
+# Adjust form schemas to the configured profile fields.
 proc ::web::user::request_operations {store} {
     variable root
     set operations [read_operations [file join $root schemas operations.json] {}]
-    if {![property $store collect_names]} {
-        set document [::tjson::parse [dict get $operations register]]
+    foreach view {register profile} {
+        set document [::tjson::parse [dict get $operations $view]]
         try {
             set schema [lindex [::tjson::query $document {$.requestBody.content['application/x-www-form-urlencoded'].schema}] 0]
             set properties [::tjson::get_object_item $schema properties]
-            foreach key {first_name last_name} {::tjson::delete_item_from_object $properties $key}
-            ::tjson::replace_item_in_object $schema required {L {{S csrf} {S email} {S password}}}
-            dict set operations register [::tjson::to_json $document]
+            set required {{S csrf}}
+            if {$view eq "register"} {lappend required {S email} {S password}}
+            foreach {key setting} {first_name collect_names last_name collect_names display_name collect_display_name username collect_username} {
+                if {[property $store $setting]} {
+                    if {$key ne "display_name"} {lappend required [list S $key]}
+                } else {::tjson::delete_item_from_object $properties $key}
+            }
+            ::tjson::replace_item_in_object $schema required [list L $required]
+            dict set operations $view [::tjson::to_json $document]
+        } finally {::tjson::destroy $document}
+    }
+    if {![property $store collect_username]} {
+        set document [::tjson::parse [dict get $operations verify]]
+        try {
+            set properties [lindex [::tjson::query $document {$.requestBody.content['application/x-www-form-urlencoded'].schema.properties}] 0]
+            ::tjson::delete_item_from_object $properties username
+            dict set operations verify [::tjson::to_json $document]
         } finally {::tjson::destroy $document}
     }
     return $operations

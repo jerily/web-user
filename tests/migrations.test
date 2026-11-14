@@ -1,0 +1,46 @@
+#
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+#
+package require tcltest
+package require web-user
+namespace import ::tcltest::*
+::tcltest::testConstraint migration_pg [info exists ::env(WEB_USER_MIGRATION_PG)]
+foreach {mode constraint} {LOCAL {} PROD migration_pg} {
+    test migration-$mode {legacy verified accounts activate; pending credentials and valid verification codes survive migration} -constraints $constraint -setup {
+        set ::env(ENV) $mode
+        set options {-database :memory: -autobegin false}
+        if {$mode eq "PROD"} {set options [concat {-dialect postgresql -autobegin false} $::env(WEB_USER_MIGRATION_PG)]}
+        set db [::tpersist::db_connect {*}$options]
+        ::tpersist::db_apply_schema $db [file join [file dirname [info script]] sql legacy-users.json]
+        set backend [::web::user::session_backend]
+        ${backend}::initdb $db
+        set handles [list [::tink::register_keyset [::tink::aead::create_keyset AES256_GCM]] [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]]
+        set store [::web::user::create -connection $db -config [dict create tenant migration aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt test-salt login_captcha_after 0]]
+    } -body {
+        set hash [::web::user::password_hash {a legacy password} {bcrypt_cost 4}]
+        foreach {uid verified address} {pending 0 pending@example.com member 1 member@example.com} {
+            ::web::user::insert $store web_user_users [dict create id $uid verified $verified email_key [::web::user::email_key $store $address] \
+                email [::web::user::seal $store $address [list email $uid]] password $hash mfa_secret {} last_step -1 revision 0 created_at [clock seconds]]
+        }
+        ::web::user::insert $store web_user_profiles [dict create id pending first_name [::web::user::seal $store Mira {profile pending first_name}] \
+            last_name [::web::user::seal $store Fern {profile pending last_name}]]
+        set token [::web::user::new_session $store verify pending 000123]
+        ::web::user::initdb $db
+        ::web::user::initdb $db
+        set result [list [dict get [::web::user::user_by_id $store member] active] [expr {[::web::user::user_by_id $store pending] eq {}}] \
+            [dict get [::web::user::registration $store pending] password]]
+        set result [lreplace $result 2 2 [expr {[lindex $result 2] eq $hash}]]
+        ::tpersist::db_transaction $db {
+            ::web::user::action_verify [dict create -store $store] [::web::user::session $store $token] {code 000123}
+        }
+        lappend result [dict get [::web::user::user_by_id $store pending] active] \
+            [dict get [::web::user::profile_names $store pending] first_name] [::web::user::session $store $token]
+        set result
+    } -cleanup {
+        ::tpersist::db_disconnect $db
+        foreach handle $handles {::tink::unregister_keyset $handle}
+    } -result {1 1 1 1 Mira {}}
+}
+cleanupTests

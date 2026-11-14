@@ -1,8 +1,15 @@
+#
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+#
+
 package require tcltest
 package require web-user
 namespace import ::tcltest::*
 ::tcltest::testConstraint postgres [info exists ::env(WEB_USER_TEST_PG)]
 namespace eval ::authtest {variable password {a long testing password}; variable serial 0}
+# Provide the setup test fixture.
 proc ::authtest::setup {{mode LOCAL} {policy {}} {mount {}}} {
     variable serial
     variable db
@@ -28,18 +35,27 @@ proc ::authtest::setup {{mode LOCAL} {policy {}} {mount {}}} {
     set ::authtest::csrf {}
     set ::authtest::cookie {}
 }
+# Provide the delivery test fixture.
 proc ::authtest::delivery {purpose address code} {set ::authtest::delivered [list $purpose $address $code]}
+# Provide the cleanup test fixture.
 proc ::authtest::cleanup {} {
     $::authtest::router destroy
     ::tpersist::db_disconnect $::authtest::db
     foreach h $::authtest::handles {::tink::unregister_keyset $h}
 }
-proc ::authtest::call {method path {fields {}} {extraHeaders {}}} {
+# Provide the call test fixture.
+proc ::authtest::call {method path {fields {}} {extraHeaders {}} {addr 127.0.0.1}} {
     variable cookie
     variable csrf
     variable last
     set headers [dict merge [dict create cookie $cookie] $extraHeaders]
-    set req [dict create method $method path $path headers $headers]
+    set at [string first ? $path]
+    set query {}
+    if {$at >= 0} {
+        set query [string range $path [expr {$at + 1}] end]
+        set path [string range $path 0 [expr {$at - 1}]]
+    }
+    set req [dict create method $method path $path queryString $query headers $headers]
     if {$method eq "POST"} {
         if {![dict exists $fields csrf]} {dict set fields csrf $csrf}
         set pairs {}
@@ -47,11 +63,12 @@ proc ::authtest::call {method path {fields {}} {extraHeaders {}}} {
         dict set req body [join $pairs &]
         dict set req headers content-type application/x-www-form-urlencoded
     }
-    set last [$::authtest::router dispatch $req {addr 127.0.0.1}]
+    set last [$::authtest::router dispatch $req [dict create addr $addr]]
     if {[dict exists $last headers Set-Cookie]} {set cookie [lindex [split [dict get $last headers Set-Cookie] {;}] 0]}
     if {[regexp {name="csrf" value="([^"]+)"} [dict get $last body] -> next]} {set csrf $next}
     return [dict get $last statusCode]
 }
+# Provide the register test fixture.
 proc ::authtest::register {} {
     variable password
     call GET /user/register
@@ -60,12 +77,16 @@ proc ::authtest::register {} {
     if {[call POST /user/verify [dict create code $code]] != 200} {error $::authtest::last}
     return $code
 }
+# Provide the login test fixture.
 proc ::authtest::login {} {
     call GET /user/login
     call POST /user/login [dict create email person@example.com password $::authtest::password]
 }
+# Provide the token test fixture.
 proc ::authtest::token {} {::web::user::cookie_token $::authtest::config [dict create headers [dict create Cookie $::authtest::cookie]]}
+# Provide the me test fixture.
 proc ::authtest::me {} {::web::user::current_user $::authtest::config [dict create headers [dict create cookie $::authtest::cookie]]}
+# Provide the setup mfa test fixture.
 proc ::authtest::setup_mfa {} {
     call POST /user/two-factor/setup [dict create operation begin password $::authtest::password]
     set row [::web::user::session $::authtest::store [::authtest::token]]
@@ -97,7 +118,7 @@ test auth-2 {CSRF, origin, malformed form, expiry, and reset-only sessions} -set
     ::tsession::sql::update [dict get $::authtest::store -sessions] [dict get $row id] {expires 0}
     lappend result [::authtest::call POST /user/reset [dict create code [lindex $::authtest::delivered 2] password $::authtest::password]]
     set result
-} -cleanup {::authtest::cleanup} -result {403 403 1 401 403}
+} -cleanup {::authtest::cleanup} -result {403 403 1 302 403}
 test auth-3 {reset code once only, sessions revoked, password whitespace preserved} -setup {::authtest::setup} -body {
     ::authtest::register
     ::authtest::login
@@ -134,6 +155,68 @@ test auth-4 {2FA enrollment, pending principal, OTP replay and disable} -setup {
     lappend result [dict get [::authtest::me] mfa_enabled]
     set result
 } -cleanup {::authtest::cleanup} -result {1 1 401 200 1 200 0}
+
+test auth-mfa-retry {reusing the enrollment code redisplays the pending login form and the next code completes it} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 totp_window 0}
+    ::authtest::register
+    ::authtest::login
+    set uid [dict get [::authtest::me] id]
+    set secret [::authtest::setup_mfa]
+    set used [dict get [::web::user::user_by_id $::authtest::store $uid] last_step]
+    ::authtest::call POST /user/logout
+    set suffix ?return_to=%2Fuser%2Fprofile
+    ::authtest::call POST /user/login$suffix [dict create email person@example.com password $::authtest::password]
+    set pending [::authtest::token]
+    set pendingCsrf $::authtest::csrf
+    set ::authtest::now [expr {$used * 30 + 1}]
+    rename ::clock ::authtest::real_clock
+    # Advance the verifier's clock without sleeping or changing replay state.
+    proc ::clock {args} {
+        if {$args eq "seconds"} {return $::authtest::now}
+        tailcall ::authtest::real_clock {*}$args
+    }
+} -body {
+    set status [::authtest::call POST /user/two-factor$suffix [dict create code [::tmfa::get_hotp $secret $used 6 SHA1]]]
+    set html [dict get $::authtest::last body]
+    set result [list $status [dict get $::authtest::last headers content-type] \
+        [string match {*Wait for the next code*} $html] \
+        [string match {*action="/user/two-factor?return_to=%2Fuser%2Fprofile"*} $html] \
+        [regexp {name="code"[^>]*value=} $html] \
+        [expr {[::authtest::token] eq $pending && $::authtest::csrf eq $pendingCsrf}] \
+        [expr {[::authtest::me] eq {}}] \
+        [dict get [::web::user::session $::authtest::store $pending] kind] \
+        [expr {[dict get [::web::user::user_by_id $::authtest::store $uid] last_step] == $used}]]
+    incr ::authtest::now 30
+    lappend result [::authtest::call POST /user/two-factor$suffix [dict create code [::tmfa::get_hotp $secret [expr {$used + 1}] 6 SHA1]]] \
+        [dict get $::authtest::last headers Location] [expr {[::authtest::me] ne {}}] \
+        [::web::user::session $::authtest::store $pending]
+    set result
+} -cleanup {
+    if {[llength [info commands ::authtest::real_clock]]} {
+        rename ::clock {}
+        rename ::authtest::real_clock ::clock
+    }
+    ::authtest::cleanup
+} -result {401 {text/html; charset=utf-8} 1 1 0 1 1 two-factor 1 302 /user/profile 1 {}}
+
+test auth-mfa-retry-limit {redisplaying or reloading the authenticator form cannot reset its attempt limit} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 challenge_limit 2}
+    ::authtest::register
+    ::authtest::login
+    ::authtest::setup_mfa
+    ::authtest::call POST /user/logout
+    ::authtest::login
+} -body {
+    set result {}
+    foreach attempt {1 2} {
+        lappend result [::authtest::call POST /user/two-factor {code invalid}] \
+            [string match {*<form method="post" action="/user/two-factor">*} [dict get $::authtest::last body]]
+        ::authtest::call GET /user/two-factor
+    }
+    lappend result [::authtest::call POST /user/two-factor {code invalid}] [expr {[::authtest::me] eq {}}]
+    set result
+} -cleanup {::authtest::cleanup} -result {401 1 401 1 429 1}
+
 test auth-5 {PROD never exposes codes, cookie is Secure, anonymous reset has same response} -constraints postgres -setup {::authtest::setup PROD} -body {
     ::authtest::register
     ::authtest::call POST /user/forgot {email person@example.com}
@@ -303,6 +386,7 @@ test auth-16 {browser forms preserve configured origin without weakening CSRF ve
 test auth-17 {numeric confirmation codes reject biased values and preserve six digits} -setup {
     rename ::twebserver::random_bytes ::authtest::original_random_bytes
     set ::authtest::randomValues {ffffff f42400 000000 000008 f423ff}
+    # Provide the random bytes test fixture.
     proc ::twebserver::random_bytes {length} {
         if {$length != 3 || $::authtest::randomValues eq {}} {error "unexpected random byte request"}
         set value [lindex $::authtest::randomValues 0]
@@ -321,6 +405,7 @@ test auth-17 {numeric confirmation codes reject biased values and preserve six d
 test auth-18 {confirmation preserves leading zeros, requires six digits and cannot be replayed} -setup {
     ::authtest::setup LOCAL {bcrypt_cost 5}
     rename ::web::user::verification_code ::authtest::original_verification_code
+    # Provide the verification code test fixture.
     proc ::web::user::verification_code {} {return 000008}
 } -body {
     ::authtest::call GET /user/register
@@ -350,7 +435,7 @@ test auth-19 {numeric confirmation codes expire and enforce the challenge attemp
     set row [::web::user::session $::authtest::store [::authtest::token]]
     ::tsession::sql::update [dict get $::authtest::store -sessions] [dict get $row id] {expires 0}
     set result [list [regexp {^[0-9]{6}$} $code] [::authtest::call POST /user/verify [dict create code $code]]]
-    lappend result [dict get [::web::user::user_by_id $::authtest::store [dict get $row uid]] verified]
+    lappend result [expr {[::web::user::user_by_id $::authtest::store [dict get $row uid]] ne {}}]
     ::authtest::call GET /user/register
     ::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]
     set code [lindex $::authtest::delivered 2]
@@ -367,6 +452,7 @@ test auth-20 {password reset preserves leading zeros and requires exactly six nu
     ::authtest::setup LOCAL {bcrypt_cost 5}
     ::authtest::register
     rename ::web::user::verification_code ::authtest::original_verification_code
+    # Provide the verification code test fixture.
     proc ::web::user::verification_code {} {return 000008}
 } -body {
     set result [list [::authtest::call POST /user/forgot {email person@example.com}]]
@@ -388,6 +474,7 @@ test auth-20 {password reset preserves leading zeros and requires exactly six nu
     ::authtest::cleanup
 } -result {200 reset 000008 1 1 400 400 400 200 200}
 
+# Provide the register named test fixture.
 proc ::authtest::register_named {{first {Zoë <b>}} {last O'Neil}} {
     call GET /user/register
     set fields [dict create email person@example.com password $::authtest::password first_name $first last_name $last]
@@ -426,7 +513,7 @@ test auth-22 {names round-trip encrypted; widgets expose only an escaped first n
     set other $::authtest::store
     dict set other -tenant another-tenant
     lappend result [dict get [::web::user::public_profile $other $uid] display_name]
-    ::web::user::update $::authtest::store web_user_users [dict create id $uid] {verified 0}
+    ::web::user::update $::authtest::store web_user_users [dict create id $uid] {active 0}
     lappend result [dict get [::web::user::public_profile $::authtest::store $uid] display_name]
     set result
 } -cleanup {::authtest::cleanup} -result {{Zoë <b>} O'Neil {Zoë <b>} 1 1 1 1 1 Member Member}
@@ -463,7 +550,7 @@ test auth-24 {existing members can edit names only with authentication and CSRF;
     lappend result [dict get [::authtest::me] display_name] [dict get [::authtest::me] last_name] \
         [expr {[dict get [::authtest::me] id] eq $uid}]
     set result
-} -cleanup {::authtest::cleanup} -result {401 401 Member 200 403 200 Mira Fern 1}
+} -cleanup {::authtest::cleanup} -result {302 401 Member 200 403 200 Mira Fern 1}
 
 test auth-25 {retry registration updates pending names but cannot replace a verified profile} -setup {
     ::authtest::setup LOCAL {bcrypt_cost 5 collect_names true}
@@ -587,6 +674,7 @@ foreach mode {LOCAL PROD} {
         ::authtest::register
         ::authtest::login
         rename ::web::user::new_session ::web::user::saved_new_session
+        # Provide the new session test fixture.
         proc ::web::user::new_session {args} {error "injected session write failure"}
     } -body {
         set token [::authtest::token]
@@ -624,7 +712,7 @@ test auth-password-validation {current password, confirmation, policy, CSRF and 
     ::authtest::call POST /user/forgot {email person@example.com}
     lappend result [::authtest::call POST /user/change-password $fields]
     set result
-} -cleanup {::authtest::cleanup} -result {403 401 400 400 400 400 400 403 401 401 401}
+} -cleanup {::authtest::cleanup} -result {403 401 400 400 400 400 400 403 302 401 401}
 
 test auth-password-throttle {incorrect current passwords consume the persistent account limit} -setup {
     ::authtest::setup LOCAL {bcrypt_cost 5 account_limit 2}
@@ -658,6 +746,7 @@ test auth-email-failure {delivery errors preserve the committed password and rep
     ::authtest::register
     ::authtest::login
     rename ::authtest::delivery ::authtest::saved_delivery
+    # Provide the delivery test fixture.
     proc ::authtest::delivery {args} {error "sensitive transport error"}
 } -body {
     set fields [dict create current_password $::authtest::password password {a different long password} confirm_password {a different long password}]
@@ -691,5 +780,410 @@ test auth-password-schema-policy {credential schemas allow one character; writes
         [string match {*Password must contain at least 18 characters*} [dict get $::authtest::last body]]
     set result
 } -cleanup {::authtest::cleanup} -result {1 1 1 400 1 400 1 400 1}
+
+# Observe image text only in tests; production exposes no CAPTCHA answer.
+proc ::authtest::captcha_setup {{policy {}}} {
+    package require tcaptcha 0.1.0
+    rename ::tcaptcha::image ::tcaptcha::test_real_image
+    # Provide the image test fixture.
+    proc ::tcaptcha::image {text} {
+        set ::authtest::captcha_answer $text
+        test_real_image $text
+    }
+    ::authtest::setup LOCAL [dict merge {registration_captcha true login_captcha_after 0 bcrypt_cost 4} $policy]
+}
+# Provide the captcha cleanup test fixture.
+proc ::authtest::captcha_cleanup {} {
+    ::authtest::cleanup
+    rename ::tcaptcha::image {}
+    rename ::tcaptcha::test_real_image ::tcaptcha::image
+}
+# Provide the captcha fields test fixture.
+proc ::authtest::captcha_fields {} {
+    if {![regexp {name="captcha_id" value="([^"]+)"} [dict get $::authtest::last body] -> id]} {error "CAPTCHA missing from form"}
+    dict create captcha_id $id captcha_answer $::authtest::captcha_answer
+}
+# Provide the captcha key test fixture.
+proc ::authtest::captcha_key {view fields} {
+    set row [::web::user::session $::authtest::store [::authtest::token]]
+    ::web::user::captcha_key $::authtest::store \
+        [::web::user::captcha_context $::authtest::config $view $row] [dict get $fields captcha_id]
+}
+# Provide the credentials test fixture.
+proc ::authtest::credentials {{address person@example.com}} {
+    dict create email $address password $::authtest::password
+}
+# Provide the register captcha test fixture.
+proc ::authtest::register_captcha {} {
+    call GET /user/register
+    set fields [dict merge [credentials] [captcha_fields]]
+    if {[call POST /user/register $fields] != 200} {error $::authtest::last}
+    set code [lindex $::authtest::delivered 2]
+    if {[call POST /user/verify [dict create code $code]] != 200} {error $::authtest::last}
+}
+# Provide the has captcha test fixture.
+proc ::authtest::has_captcha {} {expr {[string first {name="captcha_id"} [dict get $::authtest::last body]] >= 0}}
+
+test auth-captcha-1 {defaults and validated properties; no separate registration challenge route} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    set result [list [::web::user::property $::authtest::store registration_captcha] \
+        [::web::user::property $::authtest::store login_captcha_after] [::authtest::call GET /user/register-captcha]]
+    foreach policy {{registration_captcha maybe} {captcha_ttl 0} {captcha_ttl 3601} {login_captcha_after -1} {login_captcha_after maybe} {login_captcha_window 0}} {
+        lappend result [catch {::web::user::settings $policy}]
+    }
+    ::authtest::call GET /user/register
+    lappend result [::authtest::has_captcha]
+    ::authtest::call GET /user/forgot
+    lappend result [::authtest::has_captcha]
+} -cleanup {::authtest::cleanup} -result {0 3 404 1 1 1 1 1 1 0 0}
+
+test auth-captcha-2 {registration shows an inline PNG before submission; only a correct answer permits account creation} -setup {
+    ::authtest::captcha_setup
+} -body {
+    set result [list [::authtest::call GET /user/register] [::authtest::has_captcha]]
+    set fields [::authtest::captcha_fields]
+    regexp {data:image/png;base64,([^"]+)} [dict get $::authtest::last body] -> png
+    set image [GD create_from_png_data #auto [binary decode base64 $png]]
+    try {lappend result [$image width] [$image height]} finally {rename $image {}}
+    set saved [::tsession::sql::get [dict get $::authtest::store -sessions] [::authtest::captcha_key register $fields]]
+    lappend result [lsort [dict keys $saved]] [llength [::web::user::rows $::authtest::store web_user_users]] $::authtest::delivered
+    dict set fields captcha_answer [string tolower [dict get $fields captcha_answer]]
+    lappend result [::authtest::call POST /user/register [dict merge [::authtest::credentials] $fields]] \
+        [llength [::web::user::rows $::authtest::store web_user_users]] [lindex $::authtest::delivered 0]
+} -cleanup {::authtest::captcha_cleanup} -result {200 1 240 80 {expires id state} 0 {} 200 0 verify}
+
+test auth-captcha-3 {wrong answer consumes the image, retains ordinary fields and never retains the password} -setup {
+    ::authtest::captcha_setup {collect_names true}
+} -body {
+    ::authtest::call GET /user/register
+    set original [::authtest::captcha_fields]
+    set key [::authtest::captcha_key register $original]
+    set fields [dict merge [::authtest::credentials] {first_name Mira last_name Fern} $original]
+    set result [list [::authtest::call POST /user/register [dict replace $fields captcha_answer 000000]]]
+    lappend result [expr {[::tsession::sql::get [dict get $::authtest::store -sessions] $key] eq {}}] \
+        [expr {[string first $::authtest::password [dict get $::authtest::last body]] == -1}] \
+        [string match {*value="Mira"*} [dict get $::authtest::last body]] \
+        [llength [::web::user::rows $::authtest::store web_user_users]] $::authtest::delivered
+    lappend result [::authtest::call POST /user/register $fields]
+    lappend result [::authtest::call POST /user/register [dict merge $fields [::authtest::captcha_fields]]]
+    ::authtest::call POST /user/verify [dict create code [lindex $::authtest::delivered 2]]
+    set user [::web::user::user_by_email $::authtest::store person@example.com]
+    lappend result [::web::user::profile_names $::authtest::store [dict get $user id]]
+} -cleanup {::authtest::captcha_cleanup} -result {400 1 1 1 0 {} 400 200 {first_name Mira last_name Fern display_name {}}}
+
+test auth-captcha-4 {registration_captcha also gates password recovery and email delivery} -setup {
+    ::authtest::captcha_setup
+} -body {
+    ::authtest::register_captcha
+    set ::authtest::delivered {}
+    set result [list [::authtest::call GET /user/forgot] [::authtest::has_captcha]]
+    lappend result [::authtest::call POST /user/forgot {email person@example.com}] $::authtest::delivered
+    lappend result [::authtest::call POST /user/forgot [dict merge {email person@example.com} [::authtest::captcha_fields]]] \
+        [lindex $::authtest::delivered 0]
+} -cleanup {::authtest::captcha_cleanup} -result {200 1 400 {} 200 reset}
+
+test auth-captcha-5 {CAPTCHAs bind to the form action and browser; CSRF and origin checks do not consume them} -setup {
+    ::authtest::captcha_setup
+} -body {
+    ::authtest::call GET /user/register
+    set fields [::authtest::captcha_fields]
+    set good [dict merge [::authtest::credentials] $fields]
+    set result [list [::authtest::call POST /user/register [dict merge $good {csrf invalid}]] \
+        [::authtest::call POST /user/register $good {origin https://other.test}] \
+        [::authtest::call POST /user/forgot [dict merge {email person@example.com} $fields]]]
+    set oldCookie $::authtest::cookie
+    set oldCsrf $::authtest::csrf
+    set ::authtest::cookie {}
+    ::authtest::call GET /user/register
+    lappend result [::authtest::call POST /user/register $good]
+    set ::authtest::cookie $oldCookie
+    set ::authtest::csrf $oldCsrf
+    lappend result [::authtest::call POST /user/register $good]
+} -cleanup {::authtest::captcha_cleanup} -result {403 403 400 400 200}
+
+test auth-captcha-6 {expired images and replay fail; refreshing does not reset the verification limit} -setup {
+    ::authtest::captcha_setup {challenge_limit 2}
+} -body {
+    ::authtest::call GET /user/register
+    set fields [::authtest::captcha_fields]
+    ::tsession::sql::update [dict get $::authtest::store -sessions] [::authtest::captcha_key register $fields] [dict create expires [clock seconds]]
+    set result [list [::authtest::call POST /user/register [dict merge [::authtest::credentials] $fields]]]
+    ::authtest::call GET /user/register
+    lappend result [::authtest::call POST /user/register [dict merge [::authtest::credentials] [dict replace [::authtest::captcha_fields] captcha_answer 000000]]]
+    ::authtest::call GET /user/register
+    lappend result [::authtest::call POST /user/register [dict merge [::authtest::credentials] [::authtest::captcha_fields]]] \
+        [llength [::web::user::rows $::authtest::store web_user_users]] $::authtest::delivered
+} -cleanup {::authtest::captcha_cleanup} -result {400 400 429 0 {}}
+
+test auth-captcha-7 {third login attempt requires CAPTCHA after two password failures; direct POST cannot bypass it} -setup {
+    ::authtest::captcha_setup {registration_captcha false login_captcha_after 3}
+} -body {
+    ::authtest::register
+    ::authtest::call GET /user/login
+    set result [list [::authtest::has_captcha]]
+    set bad {email person@example.com password incorrect}
+    lappend result [::authtest::call POST /user/login $bad] [::authtest::has_captcha] \
+        [::authtest::call POST /user/login $bad] [::authtest::has_captcha] \
+        [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]
+    lappend result [::authtest::call POST /user/login [::authtest::credentials]]
+    lappend result [::authtest::call POST /user/login [dict merge [::authtest::credentials] [::authtest::captcha_fields]]] \
+        [dict get [::authtest::me] email]
+} -cleanup {::authtest::captcha_cleanup} -result {0 401 0 401 1 2 400 200 person@example.com}
+
+test auth-captcha-8 {visits, successful logins, CSRF failures and CAPTCHA failures do not increment password-failure counts} -setup {
+    ::authtest::captcha_setup {registration_captcha false login_captcha_after 2}
+} -body {
+    ::authtest::register
+    ::authtest::call GET /user/login
+    ::authtest::call GET /user/login
+    ::authtest::login
+    set result [list [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]]
+    ::authtest::call POST /user/login [dict merge [::authtest::credentials] {csrf invalid}]
+    lappend result [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]
+    ::authtest::call POST /user/login {email person@example.com password incorrect}
+    lappend result [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]
+    ::authtest::call POST /user/login [dict merge [::authtest::credentials] [dict replace [::authtest::captcha_fields] captcha_answer 000000]]
+    lappend result [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]
+} -cleanup {::authtest::captcha_cleanup} -result {0 0 1 1}
+
+test auth-captcha-9 {failed-login counters span browser sessions but are scoped by trusted IP, mount and tenant} -setup {
+    ::authtest::captcha_setup {registration_captcha false login_captcha_after 3}
+} -body {
+    ::authtest::call GET /user/login
+    foreach ignored {1 2} {::authtest::call POST /user/login {email nobody@example.com password incorrect}}
+    set ::authtest::cookie {}
+    ::authtest::call GET /user/login
+    set result [list [::authtest::has_captcha]]
+    ::authtest::call GET /user/login {} {x-forwarded-for 10.0.0.1}
+    lappend result [::authtest::has_captcha]
+    ::authtest::call GET /user/login {} {} 127.0.0.2
+    lappend result [::authtest::has_captcha]
+    set other [dict replace $::authtest::config -prefix /other]
+    lappend result [::web::user::login_failures $other {addr 127.0.0.1}]
+    dict set other -store -tenant other-tenant
+    lappend result [::web::user::login_failures $other {addr 127.0.0.1}]
+} -cleanup {::authtest::captcha_cleanup} -result {1 1 0 0 0}
+
+test auth-captcha-10 {CAPTCHA is consumed even when the subsequent password check fails} -setup {
+    ::authtest::captcha_setup {registration_captcha false login_captcha_after 1}
+} -body {
+    ::authtest::register
+    ::authtest::call GET /user/login
+    set fields [::authtest::captcha_fields]
+    set key [::authtest::captcha_key login $fields]
+    set result [list [::authtest::call POST /user/login [dict merge {email person@example.com password incorrect} $fields]] \
+        [expr {[::tsession::sql::get [dict get $::authtest::store -sessions] $key] eq {}}] \
+        [::authtest::call POST /user/login [dict merge [::authtest::credentials] $fields]] \
+        [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]]
+} -cleanup {::authtest::captcha_cleanup} -result {401 1 400 1}
+
+test auth-captcha-11 {login threshold is configurable, zero disables it and a fresh time window resets the count} -setup {
+    ::authtest::captcha_setup {registration_captcha false login_captcha_after 0}
+} -body {
+    ::authtest::call GET /user/login
+    foreach ignored {1 2 3} {::authtest::call POST /user/login {email nobody@example.com password incorrect}}
+    set result [list [::authtest::has_captcha] [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]]
+    ::web::user::record_login_failure $::authtest::config {addr 127.0.0.1}
+    set ::authtest::later [expr {[clock seconds]+[::web::user::property $::authtest::store login_captcha_window]}]
+    # Provide the clock test fixture.
+    proc ::web::user::clock {args} {if {$args eq "seconds"} {return $::authtest::later}; ::clock {*}$args}
+    try {lappend result [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]} finally {rename ::web::user::clock {}}
+    set result
+} -cleanup {::authtest::captcha_cleanup} -result {0 0 0}
+
+test auth-captcha-12 {a new store and mount reuse persistent failure counts and pending image verifiers} -setup {
+    ::authtest::captcha_setup {registration_captcha false login_captcha_after 3}
+} -body {
+    ::authtest::register
+    ::authtest::call GET /user/login
+    foreach ignored {1 2} {::authtest::call POST /user/login {email person@example.com password incorrect}}
+    set fields [::authtest::captcha_fields]
+    set ::authtest::store [::web::user::create -connection $::authtest::db -config [dict get $::authtest::store -config]]
+    $::authtest::router destroy
+    set ::authtest::router [::tpathexp::router]
+    set ::authtest::config [::web::user::mount $::authtest::router -store $::authtest::store \
+        -config {origin https://community.test email_enabled true deliver ::authtest::delivery}]
+    list [::web::user::login_failures $::authtest::config {addr 127.0.0.1}] \
+        [::authtest::call POST /user/login [dict merge [::authtest::credentials] $fields]]
+} -cleanup {::authtest::captcha_cleanup} -result {2 200}
+
+test auth-captcha-14 {CAPTCHA length and alphabet configuration is validated} -body {
+    set defaults [::web::user::settings {}]
+    set result [list [dict get $defaults captcha_length] [dict get $defaults captcha_letters]]
+    foreach policy {{captcha_length 3} {captcha_length 13} {captcha_length 6.5} {captcha_letters maybe}} {
+        lappend result [catch {::web::user::settings $policy}]
+    }
+    set result
+} -result {6 1 1 1 1 1}
+
+test auth-captcha-15 {all CAPTCHA forms honor an eight-digit policy, including successful verification} -body {
+    set result {}
+    foreach view {register forgot login} {
+        ::authtest::captcha_setup {captcha_length 8 captcha_letters false login_captcha_after 1}
+        try {
+            if {$view ne "register"} {::authtest::register_captcha}
+            ::authtest::call GET /user/$view
+            set fields [::authtest::captcha_fields]
+            set body [dict get $::authtest::last body]
+            regexp {data:image/png;base64,([^"]+)} $body -> png
+            set im [GD create_from_png_data #auto [binary decode base64 $png]]
+            try {set width [$im width]} finally {rename $im {}}
+            lappend result [list [regexp {^[0-9]{8}$} [dict get $fields captcha_answer]] $width \
+                [expr {[string first {Enter the 8 digits} $body] >= 0}] \
+                [expr {[string first {inputmode="numeric"} $body] >= 0}] \
+                [expr {[string first {minlength="8" maxlength="8"} $body] >= 0}]]
+            if {$view eq "forgot"} {set submitted {email person@example.com}} else {set submitted [::authtest::credentials]}
+            lappend result [::authtest::call POST /user/$view [dict merge $submitted $fields]]
+        } finally {::authtest::captcha_cleanup}
+    }
+    set result
+} -result {{1 312 1 1 1} 200 {1 312 1 1 1} 200 {1 312 1 1 1} 200}
+
+test auth-captcha-13 {the failure counter is queried only for login; rendering an error adds no second count lookup} -setup {
+    ::authtest::captcha_setup {registration_captcha false login_captcha_after 2}
+    rename ::web::user::login_failures ::web::user::test_login_failures
+    set ::authtest::count_reads 0
+    # Provide the login failures test fixture.
+    proc ::web::user::login_failures {config context} {
+        incr ::authtest::count_reads
+        test_login_failures $config $context
+    }
+} -body {
+    ::authtest::call GET /user/register
+    ::authtest::call GET /user/forgot
+    set result [list $::authtest::count_reads]
+    ::authtest::call GET /user/login
+    lappend result $::authtest::count_reads
+    ::authtest::call POST /user/login {email nobody@example.com password incorrect}
+    lappend result $::authtest::count_reads [::authtest::has_captcha]
+    ::authtest::call POST /user/login {email nobody@example.com password incorrect}
+    lappend result $::authtest::count_reads
+} -cleanup {
+    rename ::web::user::login_failures {}
+    rename ::web::user::test_login_failures ::web::user::login_failures
+    ::authtest::captcha_cleanup
+} -result {0 1 2 1 3}
+
+test auth-captcha-16 {image issuance limits return an HTTP error even after a failed password check} -setup {
+    ::authtest::captcha_setup {registration_captcha false login_captcha_after 1 browse_limit 1}
+} -body {
+    ::authtest::call GET /user/login
+    set fields [dict merge {email nobody@example.com password incorrect} [::authtest::captcha_fields]]
+    list [::authtest::call POST /user/login $fields] [::web::user::login_failures $::authtest::config {addr 127.0.0.1}]
+} -cleanup {::authtest::captcha_cleanup} -result {429 1}
+
+test auth-navigation-protected {Protected pages send guests to login with their original destination} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 collect_names true}
+} -body {
+    set result {}
+    foreach path {/user /user/ /user/profile /user/change-password /user/two-factor/setup /user/two-factor/disable} {
+        lappend result [::authtest::call GET $path]
+        lappend result [expr {[dict get $::authtest::last headers Location] eq "/user/login?return_to=[::tmfa::_uri_component $path]"}]
+        lappend result [dict get $::authtest::last headers cache-control]
+    }
+    ::authtest::call GET /user/profile?tab=security
+    lappend result [dict get $::authtest::last headers Location]
+    set result
+} -cleanup {::authtest::cleanup} -result {302 1 no-store 302 1 no-store 302 1 no-store 302 1 no-store 302 1 no-store 302 1 no-store /user/login?return_to=%2Fuser%2Fprofile%3Ftab%3Dsecurity}
+
+test auth-navigation-login {Login redirects only after authentication and issues the rotated cookie} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+} -body {
+    set path /user/login?return_to=%2Fdocs%2Fguide%3Ftab%3Dexamples%23start
+    ::authtest::call GET $path
+    set result [list [string match {*action="/user/login?return_to=%2Fdocs%2Fguide%3Ftab%3Dexamples%23start"*} [dict get $::authtest::last body]]]
+    lappend result [::authtest::call POST $path {email person@example.com password incorrect}]
+    lappend result [expr {![dict exists $::authtest::last headers Location]}]
+    lappend result [::authtest::call POST $path [dict create email person@example.com password $::authtest::password]]
+    lappend result [dict get $::authtest::last headers Location] [dict get [::authtest::me] email]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 401 1 302 /docs/guide?tab=examples#start person@example.com}
+
+test auth-navigation-register {Registration and verification retain the destination until sign-in} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    set suffix ?return_to=%2Fuser%2Fchange-password
+    ::authtest::call GET /user/login$suffix
+    set result [list [string match {*href="/user/register?return_to=%2Fuser%2Fchange-password"*} [dict get $::authtest::last body]]]
+    ::authtest::call GET /user/register$suffix
+    lappend result [::authtest::call POST /user/register$suffix [dict create email person@example.com password $::authtest::password]]
+    lappend result [expr {[::authtest::me] eq {}}] \
+        [string match {*action="/user/verify?return_to=%2Fuser%2Fchange-password"*} [dict get $::authtest::last body]]
+    lappend result [::authtest::call POST /user/verify$suffix [dict create code [lindex $::authtest::delivered 2]]]
+    lappend result [string match {*action="/user/login?return_to=%2Fuser%2Fchange-password"*} [dict get $::authtest::last body]]
+    lappend result [::authtest::call POST /user/login$suffix [dict create email person@example.com password $::authtest::password]]
+    lappend result [dict get $::authtest::last headers Location]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 200 1 1 200 1 302 /user/change-password}
+
+test auth-navigation-mfa {A pending MFA session cannot return to the destination before verification} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+    ::authtest::login
+    set secret [::authtest::setup_mfa]
+    set uid [dict get [::authtest::me] id]
+    ::authtest::call POST /user/logout
+} -body {
+    set suffix ?return_to=%2Fuser%2Fprofile
+    ::authtest::call GET /user/login$suffix
+    set result [list [::authtest::call POST /user/login$suffix [dict create email person@example.com password $::authtest::password]]]
+    lappend result [expr {[::authtest::me] eq {}}] [expr {![dict exists $::authtest::last headers Location]}] \
+        [string match {*action="/user/two-factor?return_to=%2Fuser%2Fprofile"*} [dict get $::authtest::last body]]
+    ::web::user::update $::authtest::store web_user_users [dict create id $uid] {last_step -1}
+    lappend result [::authtest::call POST /user/two-factor$suffix [dict create code [::tmfa::get_totp $secret 6 30 SHA1]]]
+    lappend result [dict get $::authtest::last headers Location] [expr {[::authtest::me] ne {}}]
+    set result
+} -cleanup {::authtest::cleanup} -result {200 1 1 1 302 /user/profile 1}
+
+test auth-navigation-unsafe {External, encoded-authority and control-character destinations never redirect} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+} -body {
+    set result {}
+    foreach target [list https://evil.test //evil.test /\\evil.test /%2fevil.test /%5cevil.test /%252fevil.test "\n//evil.test" "/ok\r\nLocation: https://evil.test" relative] {
+        set path /user/login?return_to=[::tmfa::_uri_component $target]
+        ::authtest::call GET $path
+        lappend result [::authtest::call POST $path [dict create email person@example.com password $::authtest::password]] \
+            [expr {![dict exists $::authtest::last headers Location]}]
+    }
+    lsort -unique $result
+} -cleanup {::authtest::cleanup} -result {1 200}
+
+test auth-csrf-loopback {Local origin aliases require a matching Host and valid token; PROD keeps its configured origin} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4} {origin http://localhost:8080}
+    ::authtest::call GET /user/login
+} -body {
+    set request [dict create headers [dict create Cookie $::authtest::cookie]]
+    set result {}
+    foreach {host origin} {
+        localhost:8080 http://localhost:8080
+        127.0.0.1:8080 http://127.0.0.1:8080
+        localhost:8181 http://localhost:8181
+        127.0.0.1:8181 http://127.0.0.1:8181
+        {[::1]:8080} {http://[::1]:8080}
+        127.0.0.1:8080 http://localhost:8080
+        127.0.0.1:8080 http://127.0.0.1:8181
+        127.0.0.1:8080 https://foreign.test
+        127.0.0.1:8080 null
+        localhost.evil.test:8080 http://localhost.evil.test:8080
+        127.0.0.1.evil.test:8080 http://127.0.0.1.evil.test:8080
+    } {
+        dict set request headers Host $host
+        dict set request headers Origin $origin
+        lappend result [::web::user::csrf $::authtest::config verify $request {} $::authtest::csrf]
+    }
+    dict set request headers Host 127.0.0.1:8080
+    dict set request headers Origin http://127.0.0.1:8080
+    lappend result [::web::user::csrf $::authtest::config verify $request {} invalid]
+    set production $::authtest::config
+    dict set production -store -env PROD
+    dict set production -config origin https://community.test
+    lappend result [::web::user::csrf $production verify $request {} $::authtest::csrf]
+    dict set request headers Origin https://community.test
+    lappend result [::web::user::csrf $production verify $request {} $::authtest::csrf]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 1 1 0 0 0 0 0 0 0 0 1}
 
 cleanupTests

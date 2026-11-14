@@ -10,7 +10,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.2.2
+package require web-user 0.3.0
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
@@ -41,9 +41,17 @@ Jinja 0.1.1, tjson 1.0.27, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.56.
 
 Set `collect_names true` in the account config to collect first and last names;
 the default is false. Existing members can add names through `/user/profile`.
-Names are encrypted at rest. The reusable profile widget exposes the first name
-as `display_name`, with `Member` as the fallback. See [WIDGETS.md](WIDGETS.md) for
+Names are encrypted at rest. `collect_display_name` enables an optional public
+name; SQL NULL falls back to first name, then `Member`. `collect_username` enables
+a unique lowercase public handle. Both default to false; email remains the login
+identifier. See [WIDGETS.md](WIDGETS.md) for
 the callback API and host wiring.
+
+`email_verification_required` defaults to true. Set it false to activate new
+accounts immediately while keeping email ownership unverified. The independent
+`verification_emails_enabled` flag controls optional confirmation messages;
+recovery and security notices retain their own delivery path. Required verification
+in PROD needs both verification messages and the mount's `email_enabled` switch.
 
 ## Flows
 
@@ -53,10 +61,23 @@ The lifetimes, password and TOTP policy below are defaults. Configure them in
 - Register with email and a password of at least 15 characters (up to 72 UTF-8
   bytes), then enter the six-digit numeric email confirmation code before logging
   in. Email normalization trims and lowercases; passwords are preserved exactly.
-  Register again to replace a lost/expired verification code and pending password.
-  Verified accounts cannot be overwritten by registration.
+  Pending registrations are independent and expire. The first successful
+  confirmation creates the account and invalidates competing registrations for
+  that email. A claimed username can be replaced on the verification form.
+  Existing accounts cannot be overwritten by registration.
+- Set `registration_captcha true` in `create -config` to show a CAPTCHA inside
+  registration and forgotten-password forms, before any account changes or email.
+  Login independently requires CAPTCHA before the third password check after two
+  failures from the same IP by default (`login_captcha_after 3`,
+  `login_captcha_window 900`). Set the threshold to 0 to disable login CAPTCHA.
+  `captcha_length` sets the image length (4–12, default 6); `captcha_letters false`
+  switches to digits only (default true includes letters).
+  Counts use the existing SQL store. See [CAPTCHA configuration](MOUNTING.md#store-configuration).
 - Login rotates the session. MFA-enabled accounts get only a pending challenge,
   never an authenticated principal, until the authenticator code succeeds.
+  A rejected authenticator code redisplays the form with instructions to wait
+  for the next code. The pending challenge, return destination, and attempt count
+  are preserved.
 - Forgot password produces a generic response. Reset requires the six-digit
   email code in the requesting browser, expires after 15 minutes, changes the
   password once, invalidates every session/reset challenge for that account, and
@@ -65,13 +86,26 @@ The lifetimes, password and TOTP policy below are defaults. Configure them in
   the current password and matching new-password confirmation. It enforces the
   configured policy, preserves MFA, revokes every old session/challenge, and
   issues a fresh authenticated session for this browser.
+- Close account at `/user/close-account` requires an authenticated session and
+  the current password. Confirmation permanently deletes the account, profile
+  and pending registrations for its email, revokes all sessions and challenges,
+  and returns to sign-in. It does not delete content owned by host applications.
 - Authenticator setup requires the current password. A pending, encrypted secret
   produces an `otpauth://` QR code and manual key. It becomes active only after
   confirmation. Disabling requires both the password and an unused current OTP.
   Enabling/disabling signs out other sessions. The enrollment code is consumed;
   wait for the next 30-second code before signing in again.
 - Logout is POST with CSRF and deletes the server session. Auth sessions expire
-  after 12 hours; anonymous/MFA/setup sessions after 10 minutes.
+  after 12 hours by default. Login's unchecked “Stay signed in” option instead
+  keeps the authenticated session for 30 days (`persistent_session_ttl`) and
+  issues a persistent cookie only after any required MFA succeeds. Anonymous/MFA
+  challenges still expire after 10 minutes.
+
+Account form errors render the relevant HTML form in the failed POST response,
+with the error status and message. Safe fields such as email and profile names
+are preserved; submitted passwords and codes are never filled back in. Expired
+challenges return to their starting form, and rate limits show a reload link.
+Successful sign-in still follows a validated `return_to` destination.
 
 Email is opt-in: set mount properties `email_enabled true`, `email_from`, and
 `email_region`. In PROD, `aws-sdk-tcl-ses` (`awsses` 1.0.16+) sends verification
@@ -79,6 +113,12 @@ and recovery codes, MFA enabled/disabled notices, and password-change notices
 for both changes and resets. It uses the AWS credential provider chain. LOCAL
 never invokes SES. Disabled email sends nothing; PROD registration/recovery
 therefore needs email enabled or an explicitly configured transport.
+
+The mount's `issuer` is the public site name used in authenticator apps and as
+an email subject prefix. For example, `issuer ttrek.sh` with `title {Your account}`
+produces `ttrek.sh: Confirm your email for Your account`. An empty issuer leaves
+subjects unprefixed. The store's `tenant` identifies account data and is not
+used for email branding.
 
 An optional `deliver` command prefix replaces SES and receives `purpose email
 code`; it also requires `email_enabled true` and may run in LOCAL. Purposes are
@@ -124,12 +164,13 @@ identity and appropriate upstream limits.
 TOTP allows the current step and one adjacent step each way, with a persisted
 last-accepted counter to reject replay across sessions. Compare-and-set user
 revisions and transactions prevent overlapping credential changes from silently
-winning. Run `::web::user::prune $store` periodically to delete expired sessions
-and limit buckets. The host owns scheduling. Unverified account records remain
-available for registration retry. The initial schema uses `CREATE IF NOT EXISTS`;
-future schema upgrades require explicit migrations.
+winning. Run `::web::user::prune $store` periodically to delete bounded batches of expired
+sessions, temporary registrations and counting buckets after `cleanup_grace_period`
+(default 3600 seconds) has elapsed. The grace period does not extend session or code
+validity. The host owns scheduling.
+Explicit `initdb` performs the recorded registration migration before workers start.
 
-No OAuth, email transport, MFA backup-code system, roles, or account administration
+No OAuth, MFA backup-code system, roles, or account administration
 is included. Hosts supply authorization policy: the example permits all verified
 members to edit its shared wiki/blog, using those packages' existing callbacks.
 
@@ -153,10 +194,11 @@ The package uses unmodified `tink-tcl` 20240704.0.2, `bcrypt-tcl` 2.0.1,
 `tmfa` 1.1.2, `tsession` 2.0.0, and `twebserver` for cryptographic random bytes.
 Keep persistent keysets and databases outside the source and install directories.
 
-Only the current storage and configuration format is supported. Unsalted email
-indexes are incompatible; no fallback lookup or migration is included. Provision
-a fresh account database for this release. Changing `email_hash_salt` or the MAC
-key later invalidates email lookups. Preserve both with the encryption keysets.
+Explicit `initdb` migrates the previous salted account schema to separate pending
+registrations, preserving verified accounts and valid confirmation sessions.
+Older unsalted email indexes remain incompatible and require a fresh database;
+there is no unsalted lookup fallback. Changing `email_hash_salt` or the MAC key
+invalidates email lookups. Preserve both with the encryption keysets.
 
 With dependencies on `TCLLIBPATH`:
 

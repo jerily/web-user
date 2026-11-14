@@ -1,0 +1,258 @@
+#
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+#
+
+package require tcltest
+package require web-user
+namespace import ::tcltest::*
+# Load the shared HTTP fixture when this test file is selected on its own.
+if {![llength [info commands ::authtest::setup]]} {
+    set savedMatch [::tcltest::configure -match]
+    ::tcltest::configure -match __helpers_only__
+    source [file join [file dirname [info script]] auth.test]
+    ::tcltest::configure -match $savedMatch
+}
+
+# Save the browser credentials needed to return to an independent registration.
+proc ::authtest::browser {} {list $::authtest::cookie $::authtest::csrf}
+# Restore one browser without changing any server-side state.
+proc ::authtest::restore_browser {browser} {lassign $browser ::authtest::cookie ::authtest::csrf}
+# Start registration from a different browser with a chosen password.
+proc ::authtest::pending {{password {}}} {
+    if {$password eq {}} {set password $::authtest::password}
+    restore_browser {{} {}}
+    call GET /user/register
+    call POST /user/register [dict create email person@example.com password $password]
+    list [browser] [lindex $::authtest::delivered 2]
+}
+
+test registrations-independent {each browser retains its credentials; first confirmation removes competing registrations} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 login_captcha_after 0}
+} -body {
+    lassign [::authtest::pending] first firstCode
+    lassign [::authtest::pending {another pending password}] second secondCode
+    set result [list [llength [::web::user::rows $::authtest::store web_user_users]] \
+        [llength [::web::user::rows $::authtest::store web_user_registrations]]]
+    ::authtest::restore_browser $first
+    lappend result [::authtest::call POST /user/verify [dict create code $firstCode]]
+    lappend result [llength [::web::user::rows $::authtest::store web_user_registrations]] [::authtest::login]
+    ::authtest::restore_browser $second
+    lappend result [::authtest::call POST /user/verify [dict create code $secondCode]]
+    ::authtest::call GET /user/login
+    lappend result [::authtest::call POST /user/login {email person@example.com password {another pending password}}]
+    set result
+} -cleanup {::authtest::cleanup} -result {0 2 200 0 200 403 401}
+
+test registrations-expired {an expired temporary registration cannot be confirmed by a still-live session} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    lassign [::authtest::pending] browser code
+    set pending [lindex [::web::user::rows $::authtest::store web_user_registrations] 0]
+    ::web::user::update $::authtest::store web_user_registrations [dict create id [dict get $pending id]] {expires 0}
+    list [::authtest::call POST /user/verify [dict create code $code]] [llength [::web::user::rows $::authtest::store web_user_users]]
+} -cleanup {::authtest::cleanup} -result {400 0}
+
+test registrations-shared-attempts {new pending registrations cannot reset the per-email guessing allowance} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 challenge_limit 2}
+} -body {
+    lassign [::authtest::pending] first code
+    set wrong 000000
+    if {$code eq $wrong} {set wrong 000001}
+    set result [list [::authtest::call POST /user/verify [dict create code $wrong]]]
+    lassign [::authtest::pending] second code
+    set wrong 000000
+    if {$code eq $wrong} {set wrong 000001}
+    lappend result [::authtest::call POST /user/verify [dict create code $wrong]] \
+        [::authtest::call POST /user/verify [dict create code $code]]
+    set result
+} -cleanup {::authtest::cleanup} -result {400 400 429}
+
+foreach send {false true} {
+    test registrations-optional-$send {active accounts remain unverified until ownership is proved, independently of delivery policy} -setup {
+        ::authtest::setup LOCAL [dict create bcrypt_cost 4 email_verification_required false verification_emails_enabled $send]
+    } -body {
+        lassign [::authtest::pending] browser code
+        set user [::web::user::user_by_email $::authtest::store person@example.com]
+        set result [list [dict get $user active] [dict get $user verified] \
+            [llength [::web::user::rows $::authtest::store web_user_registrations]] [::authtest::login]]
+        lappend result [::authtest::call POST /user/two-factor/setup [dict create operation begin password $::authtest::password]]
+        # Email policy changes apply to new registrations without locking this account.
+        set changed $::authtest::store
+        dict set changed -config email_verification_required true
+        lappend result [expr {[::web::user::authenticated $changed [::web::user::session $changed [::authtest::token]]] ne {}}]
+        if {$send} {
+            ::authtest::call POST /user/resend-verification
+            lappend result [::authtest::call POST /user/verify [dict create code [lindex $::authtest::delivered 2]]]
+        } else {
+            ::authtest::call POST /user/forgot {email person@example.com}
+            lappend result [::authtest::call POST /user/reset [dict create code [lindex $::authtest::delivered 2] password $::authtest::password]]
+        }
+        lappend result [dict get [::web::user::user_by_email $::authtest::store person@example.com] verified]
+        set result
+    } -cleanup {::authtest::cleanup} -result {1 0 0 200 403 1 200 1}
+}
+
+test registrations-policy {invalid policies fail early and required verification cannot silently lose delivery in PROD} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    set result {}
+    foreach policy {{email_verification_required maybe} {verification_emails_enabled maybe} {resend_cooldown 0}} {
+        lappend result [catch {::web::user::settings $policy}]
+    }
+    foreach {required send delivery expected} {true true true 0 true false true 1 true true false 1 false false false 0 false true true 0} {
+        set config $::authtest::config
+        dict set config -store -env PROD
+        dict set config -store -config email_verification_required $required
+        dict set config -store -config verification_emails_enabled $send
+        dict set config -config email_enabled $delivery
+        lappend result [expr {[catch {::web::user::validate_email_config $config}] == $expected}]
+    }
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 1 1 1 1 1}
+
+test registrations-resend {resend replaces only that browser's code, keeps credentials and enforces a cooldown} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    lassign [::authtest::pending] browser code
+    set before [lindex [::web::user::rows $::authtest::store web_user_registrations] 0]
+    set result [list [::authtest::call POST /user/resend-verification]]
+    set newCode [lindex $::authtest::delivered 2]
+    set next [::authtest::browser]
+    set after [lindex [::web::user::rows $::authtest::store web_user_registrations] 0]
+    lappend result [expr {[dict get $before password] eq [dict get $after password]}] \
+        [::authtest::call POST /user/resend-verification]
+    ::authtest::restore_browser $browser
+    lappend result [::authtest::call POST /user/verify [dict create code $code]]
+    ::authtest::restore_browser $next
+    lappend result [::authtest::call POST /user/verify [dict create code $newCode]]
+    set result
+} -cleanup {::authtest::cleanup} -result {200 1 429 403 200}
+
+test registrations-cleanup {maintenance is bounded, tenant-scoped and idempotent, and removes associated challenges} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    foreach i {1 2} {
+        ::authtest::pending
+        set id [dict get [::web::user::session $::authtest::store [::authtest::token]] uid]
+        ::web::user::update $::authtest::store web_user_registrations [dict create id $id] {expires 0}
+    }
+    set other $::authtest::store
+    dict set other -tenant untouched
+    ::web::user::insert $other web_user_limits {id expired hits 1 expires 0}
+    ::web::user::insert $::authtest::store web_user_limits {id expired hits 1 expires 0}
+    ::web::user::insert $::authtest::store web_user_limits [dict create id live hits 1 expires [expr {[clock seconds]+100}]]
+    set result [list [::web::user::prune_registrations $::authtest::store 1] \
+        [llength [::web::user::rows $::authtest::store web_user_registrations]]]
+    lappend result [dict get [::web::user::prune $::authtest::store] registrations] \
+        [dict get [::web::user::prune $::authtest::store] registrations] \
+        [expr {[::web::user::one $other web_user_limits {id expired}] ne {}}] \
+        [expr {[::web::user::one $::authtest::store web_user_limits {id live}] ne {}}] \
+        [expr {[::web::user::session $::authtest::store [::authtest::token]] eq {}}] \
+        [catch {::web::user::prune $::authtest::store 0}]
+    set result
+} -cleanup {::authtest::cleanup} -result {1 1 1 0 1 1 1 1}
+
+test registrations-name-defaults {public-name fields are disabled by default and their schema rejects unsolicited values} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    ::authtest::call GET /user/register
+    set result [list [::web::user::property $::authtest::store collect_display_name] [::web::user::property $::authtest::store collect_username]]
+    lappend result [::authtest::call POST /user/register [dict merge [::authtest::credentials] {username unwanted}]]
+    set result
+} -cleanup {::authtest::cleanup} -result {0 0 400}
+
+foreach {mode constraint} {LOCAL {} PROD postgres} {
+    test registrations-cleanup-grace-$mode {expired rows remain unusable during grace and are deleted only after it elapses} -constraints $constraint -setup {
+        ::authtest::setup $mode {bcrypt_cost 4}
+    } -body {
+        lassign [::authtest::pending] browser code
+        set store $::authtest::store
+        set pending [dict get [::web::user::session $store [::authtest::token]] uid]
+        set token [::web::user::new_session $store]
+        set session [dict get [::web::user::session $store $token] id]
+        set now [clock seconds]
+        set recent [expr {$now - 30}]
+        ::web::user::update $store web_user_registrations [dict create id $pending] [dict create expires $recent]
+        ::web::user::update $store tsession_sessions [dict create id $session] [dict create expires $recent]
+        ::web::user::insert $store web_user_limits [dict create id grace hits 1 expires $recent]
+        set result [list [::web::user::property $store cleanup_grace_period] [::web::user::prune $store] \
+            [::web::user::session $store $token] [::authtest::call POST /user/verify [dict create code $code]]]
+        foreach {table id} [list web_user_registrations $pending tsession_sessions $session web_user_limits grace] {
+            lappend result [expr {[::web::user::one $store $table [dict create id $id]] ne {}}]
+            ::web::user::update $store $table [dict create id $id] [dict create expires [expr {$now - 3601}]]
+        }
+        lappend result [::web::user::prune $store] [::web::user::prune $store]
+        set result
+    } -cleanup {::authtest::cleanup} -result {3600 {registrations 0 sessions 0 limits 0} {} 400 1 1 1 {registrations 1 sessions 1 limits 1} {registrations 0 sessions 0 limits 0}}
+}
+
+test registrations-cleanup-grace-config {grace accepts zero and rejects negative or excessive retention} -body {
+    set result {}
+    foreach value {0 3600 2592000 -1 2592001 invalid} {
+        lappend result [catch {::web::user::settings [dict create cleanup_grace_period $value]}]
+    }
+    set result
+} -result {0 0 0 1 1 1}
+
+test registrations-username-collision {a competing username can be changed while confirming with the same still-valid code} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 collect_username true collect_display_name true}
+} -body {
+    ::authtest::call GET /user/register
+    ::authtest::call POST /user/register [dict merge [::authtest::credentials] {username Shared_Name display_name {First user}}]
+    set first [::authtest::browser]
+    set firstCode [lindex $::authtest::delivered 2]
+    ::authtest::restore_browser {{} {}}
+    ::authtest::call GET /user/register
+    ::authtest::call POST /user/register [dict merge [::authtest::credentials second@example.com] {username SHARED_NAME display_name {Second user}}]
+    set second [::authtest::browser]
+    set secondCode [lindex $::authtest::delivered 2]
+    ::authtest::restore_browser $first
+    set result [list [::authtest::call POST /user/verify [dict create code $firstCode]]]
+    ::authtest::restore_browser $second
+    lappend result [::authtest::call POST /user/verify [dict create code $secondCode]] \
+        [expr {[string first {Choose another username} [dict get $::authtest::last body]] >= 0}] \
+        [llength [::web::user::rows $::authtest::store web_user_registrations]]
+    lappend result [::authtest::call POST /user/verify [dict create code $secondCode username Second_User]] \
+        [dict get [::web::user::user_by_email $::authtest::store second@example.com] username] \
+        [llength [::web::user::rows $::authtest::store web_user_registrations]]
+    set result
+} -cleanup {::authtest::cleanup} -result {200 409 1 1 200 second_user 0}
+
+test registrations-display-name {nullable public names fall back to first name and can be set, escaped and cleared} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 collect_names true collect_display_name true collect_username true}
+} -body {
+    ::authtest::call GET /user/register
+    ::authtest::call POST /user/register [dict merge [::authtest::credentials] {first_name Mira last_name Fern username Mira_Fern display_name {}}]
+    ::authtest::call POST /user/verify [dict create code [lindex $::authtest::delivered 2]]
+    ::authtest::login
+    set uid [dict get [::authtest::me] id]
+    set result [list [dict get [::authtest::me] display_name] [dict get [::authtest::me] username]]
+    lappend result [::authtest::call POST /user/profile {first_name Mira last_name Fern username Mira_Fern display_name {Mira <b>}}] \
+        [dict get [::authtest::me] display_name]
+    set widget [::web::user::widget $::authtest::config profile [dict create user_id $uid] {} {}]
+    lappend result [expr {[string first {Mira &lt;b&gt;} $widget] >= 0}] \
+        [::authtest::call POST /user/profile {first_name Mira last_name Fern username Mira_Fern display_name {}}] \
+        [dict get [::authtest::me] display_name] \
+        [dict get [::web::user::one $::authtest::store web_user_profiles [dict create id $uid]] display_name]
+    set result
+} -cleanup {::authtest::cleanup} -result {Mira mira_fern 200 {Mira <b>} 1 200 Mira {}}
+
+foreach {mode constraint} {LOCAL {} PROD postgres} {
+    test registrations-profile-username-$mode {username-only profiles normalize edits and reject another account's handle} -constraints $constraint -setup {
+        ::authtest::setup $mode {bcrypt_cost 4 collect_username true}
+    } -body {
+        foreach {address username} {person@example.com original second@example.com occupied} {
+            ::authtest::call GET /user/register
+            ::authtest::call POST /user/register [dict merge [::authtest::credentials $address] [dict create username $username]]
+            ::authtest::call POST /user/verify [dict create code [lindex $::authtest::delivered 2]]
+        }
+        ::authtest::login
+        list [::authtest::call POST /user/profile {username occupied}] [dict get [::authtest::me] username] \
+            [::authtest::call POST /user/profile {username Renamed_Handle}] [dict get [::authtest::me] username] \
+            [llength [::web::user::rows $::authtest::store web_user_profiles]]
+    } -cleanup {::authtest::cleanup} -result {409 original 200 renamed_handle 0}
+}
+
+cleanupTests

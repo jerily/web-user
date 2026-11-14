@@ -1,0 +1,135 @@
+#
+# Copyright Jerily LTD. All Rights Reserved.
+# SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
+# SPDX-License-Identifier: MIT.
+#
+
+package require tcltest
+package require web-user
+namespace import ::tcltest::*
+if {![llength [info commands ::authtest::setup]]} {
+    set savedMatch [::tcltest::configure -match]
+    ::tcltest::configure -match __helpers_only__
+    source [file join [file dirname [info script]] auth.test]
+    ::tcltest::configure -match $savedMatch
+}
+
+# Read the account cookie's lifetime, returning -1 for browser-session cookies.
+proc ::authtest::cookie_age {} {
+    set age -1
+    regexp {; Max-Age=([0-9]+)} [dict get $::authtest::last headers Set-Cookie] -> age
+    return $age
+}
+
+foreach {mode constraint} {LOCAL {} PROD postgres} {
+    test persistence-default-$mode {fresh login is unchecked and uses the regular session lifetime} -constraints $constraint -setup {
+        ::authtest::setup $mode {bcrypt_cost 4 session_ttl 120 persistent_session_ttl 600}
+        ::authtest::register
+    } -body {
+        ::authtest::call GET /user/login
+        regexp {<input type="checkbox" name="stay_signed_in"[^>]*>} [dict get $::authtest::last body] input
+        set result [list [expr {[string first checked $input] < 0}] [::authtest::login] [::authtest::cookie_age]]
+        set row [::web::user::session $::authtest::store [::authtest::token]]
+        set ttl [expr {[dict get $row expires] - [clock seconds]}]
+        lappend result [::web::user::session_persistent $row] [expr {$ttl > 115 && $ttl <= 120}] \
+            [::web::user::session_persistent [dict remove $row stay_signed_in]]
+        set result
+    } -cleanup {::authtest::cleanup} -result {1 200 -1 0 1 0}
+
+    test persistence-optin-$mode {only explicit opt-in persists; cookie refresh cannot extend SQL expiry and logout revokes it} -constraints $constraint -setup {
+        ::authtest::setup $mode {bcrypt_cost 4 session_ttl 120 persistent_session_ttl 600}
+        ::authtest::register
+    } -body {
+        set result [list [::authtest::call POST /user/login [dict create email person@example.com password $::authtest::password stay_signed_in 1]]]
+        set token [::authtest::token]
+        set row [::web::user::session $::authtest::store $token]
+        set cookie [dict get $::authtest::last headers Set-Cookie]
+        lappend result [::web::user::session_persistent $row] \
+            [expr {[::authtest::cookie_age] > 595 && [::authtest::cookie_age] <= 600}] \
+            [string match {*; HttpOnly*} $cookie] [string match {*; SameSite=Lax*} $cookie] \
+            [expr {[string match {*; Secure*} $cookie] == ($mode eq "PROD")}]
+        set expires [expr {[clock seconds] + 90}]
+        ::web::user::update $::authtest::store tsession_sessions [dict create id [dict get $row id]] [dict create expires $expires]
+        ::authtest::call GET /user
+        lappend result [expr {[::authtest::cookie_age] > 85 && [::authtest::cookie_age] <= 90}] \
+            [expr {[dict get [::web::user::session $::authtest::store $token] expires] == $expires}]
+        ::authtest::call POST /user/logout
+        lappend result [::authtest::cookie_age] [::web::user::session $::authtest::store $token]
+        set result
+    } -cleanup {::authtest::cleanup} -result {200 1 1 1 1 1 1 1 -1 {}}
+}
+
+test persistence-mfa {pending MFA retains the server-side choice but cannot issue a persistent cookie before success} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 session_ttl 120 persistent_session_ttl 600 challenge_ttl 60}
+    ::authtest::register
+    ::authtest::login
+    set uid [dict get [::authtest::me] id]
+    set secret [::authtest::setup_mfa]
+    set used [dict get [::web::user::user_by_id $::authtest::store $uid] last_step]
+    ::authtest::call POST /user/logout
+} -body {
+    ::authtest::call POST /user/login [dict create email person@example.com password $::authtest::password stay_signed_in 1]
+    set token [::authtest::token]
+    set row [::web::user::session $::authtest::store $token]
+    set ttl [expr {[dict get $row expires] - [clock seconds]}]
+    set result [list [dict get $row kind] [::web::user::session_persistent $row] [::authtest::cookie_age] \
+        [expr {$ttl > 55 && $ttl <= 60}] [expr {[::authtest::me] eq {}}]]
+    lappend result [::authtest::call POST /user/two-factor {code invalid}] [::authtest::cookie_age] \
+        [::authtest::call POST /user/two-factor {code invalid stay_signed_in 1}]
+    lappend result [::authtest::call POST /user/two-factor [dict create code [::tmfa::get_hotp $secret [expr {$used + 1}] 6 SHA1]]] \
+        [expr {[::authtest::cookie_age] > 595 && [::authtest::cookie_age] <= 600}] \
+        [::web::user::session $::authtest::store $token]
+    set result
+} -cleanup {::authtest::cleanup} -result {two-factor 1 -1 1 1 401 -1 400 200 1 {}}
+
+test persistence-rotations {credential and MFA changes preserve the choice; password recovery clears it} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+    ::authtest::call POST /user/login [dict create email person@example.com password $::authtest::password stay_signed_in 1]
+} -body {
+    set result {}
+    set old [::authtest::token]
+    lappend result [::authtest::call POST /user/change-password [dict create current_password $::authtest::password \
+        password $::authtest::password confirm_password $::authtest::password]] \
+        [expr {[::authtest::cookie_age] > 0}] [::web::user::session $::authtest::store $old]
+    set secret [::authtest::setup_mfa]
+    lappend result [expr {[::authtest::cookie_age] > 0}]
+    set uid [dict get [::authtest::me] id]
+    set used [dict get [::web::user::user_by_id $::authtest::store $uid] last_step]
+    lappend result [::authtest::call POST /user/two-factor/disable [dict create password $::authtest::password \
+        code [::tmfa::get_hotp $secret [expr {$used + 1}] 6 SHA1]]] [expr {[::authtest::cookie_age] > 0}]
+    ::authtest::call POST /user/forgot {email person@example.com}
+    lappend result [::authtest::cookie_age]
+    ::authtest::call POST /user/reset [dict create code [lindex $::authtest::delivered 2] password $::authtest::password]
+    lappend result [::authtest::cookie_age] [expr {[::authtest::me] eq {}}]
+    set result
+} -cleanup {::authtest::cleanup} -result {200 1 {} 1 200 1 -1 -1 1}
+
+test persistence-redisplay {CAPTCHA retries preserve an explicit choice; new forms reset it and malformed values are rejected} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4 login_captcha_after 1}
+} -body {
+    ::authtest::call GET /user/login
+    set fields [dict create email person@example.com password $::authtest::password stay_signed_in 1]
+    set result [list [::authtest::call POST /user/login $fields]]
+    regexp {<input type="checkbox" name="stay_signed_in"[^>]*>} [dict get $::authtest::last body] input
+    lappend result [expr {[string first checked $input] >= 0}] [::authtest::cookie_age]
+    ::authtest::call GET /user/login
+    regexp {<input type="checkbox" name="stay_signed_in"[^>]*>} [dict get $::authtest::last body] input
+    lappend result [expr {[string first checked $input] < 0}]
+    foreach value {on true 0 invalid} {
+        lappend result [::authtest::call POST /user/login [dict replace $fields stay_signed_in $value]]
+    }
+    set result
+} -cleanup {::authtest::cleanup} -result {400 1 -1 1 400 400 400 400}
+
+test persistence-cookie-headers {adding persistence preserves unrelated response cookies} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    ::authtest::register
+    ::authtest::call POST /user/login [dict create email person@example.com password $::authtest::password stay_signed_in 1]
+} -body {
+    set response [::web::user::set_cookie $::authtest::config [::twebserver::add_cookie {} preference blue] [::authtest::token]]
+    set cookies [dict get $response multiValueHeaders Set-Cookie]
+    list [llength $cookies] [string match {preference=blue;*} [lindex $cookies 0]] [string match {*; Max-Age=*} [lindex $cookies 1]]
+} -cleanup {::authtest::cleanup} -result {2 1 1}
+
+cleanupTests
