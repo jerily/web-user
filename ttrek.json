@@ -1,11 +1,11 @@
 {
   "name": "web-user",
   "license": "MIT",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "scripts": {},
   "dependencies": {
     "tcl": ">=9.1.0,<10.0.0",
-    "tpersist": "^0.1.2",
+    "tpersist": "^0.1.4",
     "tpathexp": "^1.1.0",
     "jinja2-tcl": "^0.1.1",
     "tjson": "^1.0.27",
@@ -17,10 +17,10 @@
     "tdbcpostgres": ">=1.1.8",
     "bcrypt-tcl": "2.0.1",
     "twebserver": "^1.47.56",
-    "tsession": "^2.0.0",
+    "tsession": "^2.0.1",
     "topenapi": "^0.2.0",
-    "tsession-sqlite": "^1.0.1",
-    "tsession-postgres": "^1.0.1",
+    "tsession-sqlite": "^1.0.2",
+    "tsession-postgres": "^1.0.2",
     "aws-sdk-tcl-ses": "^1.0.16"
   },
   "devDependencies": {}
