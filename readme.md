@@ -10,7 +10,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.4.0
+package require web-user 0.5.0
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
@@ -252,3 +252,10 @@ Use `sync_access` to apply configured group membership and permission grants,
 then `has_permission` to authorize actions for a verified account. See
 [Groups and permissions](docs/access.md) for INI examples, startup/maintenance
 integration, and revocation behavior.
+
+## User administration
+
+Accounts with `users.manage` get an **Account → Manage users** link. The directory
+lists registration dates, authenticator status and configured groups, with
+tenant-scoped pagination. See [user administration](docs/admin.md) for setup and
+the display contract.

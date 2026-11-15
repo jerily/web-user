@@ -12,7 +12,7 @@ namespace eval ::web::user {
         package require $name $version
     }
     namespace import ::tpersist::db_*
-    foreach module {storage settings permissions validation crypto profiles sessions captcha email registrations maintenance service navigation http widgets mount} {
+    foreach module {storage settings permissions validation crypto profiles sessions captcha email registrations maintenance service navigation http admin widgets mount} {
         source [file join $root library $module.tcl]
     }
     unset name version module

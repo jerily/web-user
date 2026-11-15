@@ -82,3 +82,7 @@ Bind the permission to the content package's authorization callback:
 The adapter uses the signed account session and checks current grants on every
 call. The content packages use the same policy to generate edit/create links and
 to authorize GET/POST editor routes. A valid CSRF token alone does not grant access.
+
+`users.manage` grants the [user administration directory](admin.md), linked from
+Account. Add it explicitly to the administrator group; forum moderation and
+content editing permissions do not grant access to this page.

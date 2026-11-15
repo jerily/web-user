@@ -1,0 +1,24 @@
+.user-admin{max-width:72rem;margin:2.5rem auto;padding:0 1.25rem;color:inherit;font:inherit;line-height:1.5}
+.user-admin a{color:inherit;text-underline-offset:.2em}
+.user-admin-back{display:inline-block;margin-bottom:1.5rem}
+.user-admin-heading{display:flex;align-items:center;justify-content:space-between;gap:1.5rem;margin-bottom:1.5rem}
+.user-admin-heading h1{font-size:clamp(1.8rem,4vw,2.6rem);line-height:1.15;margin:.3rem 0 .6rem}
+.user-admin-heading p{margin:.3rem 0}
+.user-admin-eyebrow{text-transform:uppercase;font-size:.75rem;font-weight:700;letter-spacing:.12em}
+.user-admin-total{white-space:nowrap;padding:.75rem 1rem;border:1px solid #d5ddd8;border-radius:.65rem;background:#f2f6f3;color:#244232}
+.user-admin-table{max-width:100%;overflow-x:auto;border:1px solid #d5ddd8;border-radius:.75rem;background:#fff;color:#25372d}
+.user-admin table{width:100%;margin:0;border-collapse:collapse;text-align:left;font:inherit}
+.user-admin th{padding:1rem 1.2rem;background:#f2f6f3;font-size:.8rem;font-weight:700;white-space:nowrap}
+.user-admin td{padding:1.1rem 1.2rem;vertical-align:top;border-top:1px solid #e1e7e3}
+.user-admin td:first-child,.user-admin td:last-child{font-size:inherit;width:auto;color:inherit}
+.user-admin tbody tr:hover{background:#fafcfb}
+.user-admin time{white-space:nowrap;font-size:.875rem}
+.user-admin-name,.user-admin-email,.user-admin small{display:block}
+.user-admin-email{overflow-wrap:anywhere;min-width:12rem}
+.user-admin small,.user-admin-muted{color:#5d6c62;font-size:.85rem}
+.user-admin-badge{display:inline-block;padding:.18rem .55rem;border-radius:.35rem;background:#edf0ee;color:#46564b;font-size:.8rem;white-space:nowrap}
+.user-admin-enabled{background:#e0f0e5;color:#205a36}
+.user-admin-groups{display:flex;flex-wrap:wrap;gap:.4rem;min-width:7rem}
+.user-admin-pagination{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:1.5rem;margin:1.4rem 0;font-size:.9rem}
+.user-admin a:focus-visible,.user-admin-table:focus-visible{outline:3px solid #527c61;outline-offset:4px}
+@media(max-width:640px){.user-admin{margin:1.5rem auto;padding:0 .75rem}.user-admin-heading{align-items:flex-start;flex-direction:column;gap:.75rem}.user-admin td,.user-admin th{padding:.85rem}.user-admin-total{font-size:.9rem}}

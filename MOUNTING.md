@@ -447,3 +447,11 @@ period delays physical deletion only: expired sessions and codes remain unusable
 For explicit concurrency validation, set `WEB_USER_TEST_PG` to a disposable
 PostgreSQL connection-options list and run `tclsh9.1 tests/concurrency.tcl`. The
 migration test uses a separate empty database selected by `WEB_USER_MIGRATION_PG`.
+
+## User administration
+
+`GET <prefix>/admin/users` is the user directory, protected by `users.manage`.
+The Account page shows **Manage users** only to authorized accounts. It lists
+registered accounts, registration time, MFA state and configured groups, with
+50 users per page. See [user administration](docs/admin.md) for permissions,
+privacy, templates and schema initialization.

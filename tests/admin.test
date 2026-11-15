@@ -1,0 +1,115 @@
+package require tcltest
+package require web-user 0.5.0
+namespace import ::tcltest::*
+namespace eval ::admintest {}
+proc ::admintest::setup {} {
+    set ::env(ENV) LOCAL
+    variable db [::web::user::connect {sqlite_path :memory:}]
+    ::web::user::initdb $db
+    variable handles [list [tink::register_keyset [tink::aead::create_keyset AES256_GCM]] [tink::register_keyset [tink::mac::create_keyset HMAC_SHA256]]]
+    variable store [::web::user::create -connection $db -config [dict create tenant admin-test \
+        aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt admin-test-salt]]
+    variable router [::tpathexp::router]
+    variable mount [::web::user::mount $router -store $store -config {prefix /accounts origin http://localhost:8080}]
+    variable cookie {}
+}
+proc ::admintest::member {address {timestamp 1763208000} {mfa 0} {verified 1} {active 1} {tenant {}}} {
+    set store $::admintest::store
+    if {$tenant ne {}} {dict set store -tenant $tenant}
+    set uid [ksuid::generate_ksuid]
+    set secret [expr {$mfa ? [::web::user::seal $store ADMIN-MFA-SECRET [list mfa $uid]] : ""}]
+    ::web::user::insert $store web_user_users [dict create id $uid active $active verified $verified \
+        email_key [::web::user::email_key $store $address] email [::web::user::seal $store $address [list email $uid]] \
+        password PASSWORD-MUST-NOT-LEAK mfa_secret $secret last_step -1 revision 0 created_at $timestamp]
+    return $uid
+}
+proc ::admintest::login {uid {kind auth}} {
+    set token [::web::user::new_session $::admintest::store $kind $uid]
+    set ::admintest::cookie [lindex [split [dict get [::web::user::set_cookie $::admintest::mount {} $token] headers Set-Cookie] {;}] 0]
+}
+proc ::admintest::grant {groups permissions} {::web::user::sync_access $::admintest::store $groups $permissions}
+proc ::admintest::get {{target /accounts/admin/users} {method GET}} {
+    set parts [split $target ?]
+    $::admintest::router dispatch [dict create method $method path [lindex $parts 0] queryString [lindex $parts 1] \
+        headers [dict create cookie $::admintest::cookie]] {addr 127.0.0.1}
+}
+proc ::admintest::cleanup {} {
+    $::admintest::router destroy
+    ::tpersist::db_disconnect $::admintest::db
+    foreach handle $::admintest::handles {tink::unregister_keyset $handle}
+}
+test admin-1 {permission protects the list and Account link; group names and other grants imply no access} -setup ::admintest::setup -body {
+    set anonymous [::admintest::get]
+    set uid [::admintest::member mira@example.com]
+    ::admintest::login $uid
+    set result [list [dict get $anonymous statusCode] [dict get $anonymous headers Location]]
+    foreach permissions {{admin {}} {admin {forum.moderate, wiki.edit, blog.edit}} {admin users.manage}} {
+        ::admintest::grant {admin mira@example.com} $permissions
+        set page [::admintest::get]
+        lappend result [dict get $page statusCode] \
+            [string match {*href="/accounts/admin/users"*} [dict get [::admintest::get /accounts] body]]
+    }
+    ::admintest::grant {} {}
+    lappend result [dict get [::admintest::get] statusCode] \
+        [string match {*href="/accounts/admin/users"*} [dict get [::admintest::get /accounts] body]]
+    set result
+} -cleanup ::admintest::cleanup -result {302 /accounts/login?return_to=%2Faccounts%2Fadmin%2Fusers 403 0 403 0 200 1 403 0}
+
+test admin-2 {registered dates, confirmed MFA and assigned groups are escaped and tenant-scoped} -setup ::admintest::setup -body {
+    set admin [::admintest::member mira@example.com]
+    set member [::admintest::member rowan@example.com 1763208000 1]
+    ::admintest::member inactive@example.com 1763207999 0 0 0
+    ::admintest::member secret-other-tenant@example.com 1763208001 1 1 1 other-tenant
+    ::web::user::save_profile $::admintest::store $member {first_name {<script>alert(1)</script>} last_name Fern}
+    ::admintest::grant {admin mira@example.com editor {rowan@example.com, inactive@example.com} moderator rowan@example.com} \
+        {admin users.manage editor wiki.edit moderator forum.moderate}
+    ::admintest::login $admin
+    set page [::admintest::get]
+    set body [dict get $page body]
+    set rows [::web::user::admin_user_rows $::admintest::store 1]
+    list [dict get $page statusCode] [dict get $page headers cache-control] [dict get $rows total] \
+        [string match {*2025-11-15T12:00:00Z*} $body] \
+        [string match {*&lt;script&gt;alert(1)&lt;/script&gt; Fern*} $body] \
+        [string match {*user-admin-enabled">On*} $body] [string match {*badge">Off*} $body] \
+        [regexp -all {badge">editor</span>} $body] [string match {*badge">moderator</span>*} $body] \
+        [string match {*Inactive*} $body] [string match {*Email unverified*} $body] \
+        [regexp {secret-other-tenant|PASSWORD-MUST-NOT-LEAK|ADMIN-MFA-SECRET|<script>} $body] \
+        [dict exists [lindex [dict get $rows items] 0] password] [dict exists [lindex [dict get $rows items] 0] mfa_secret]
+} -cleanup ::admintest::cleanup -result {200 no-store 3 1 1 1 1 2 1 1 1 0 0 0}
+
+test admin-3 {pending MFA, unverified and inactive accounts cannot administer users} -setup ::admintest::setup -body {
+    set verified [::admintest::member mira@example.com]
+    set unverified [::admintest::member rowan@example.com 1 0 0]
+    set inactive [::admintest::member robin@example.com 1 0 1 0]
+    ::admintest::grant {admin {mira@example.com, rowan@example.com, robin@example.com}} {admin users.manage}
+    set result {}
+    foreach uid [list $verified $unverified $inactive] kind {two-factor auth auth} {
+        ::admintest::login $uid $kind
+        set response [::admintest::get]
+        lappend result [dict get $response statusCode] [string match {*registered users*} [dict get $response body]]
+    }
+    set result
+} -cleanup ::admintest::cleanup -result {302 0 403 0 302 0}
+
+test admin-4 {pagination covers every registered account with stable newest-first ordering and strict queries} -setup ::admintest::setup -body {
+    set admin [::admintest::member admin@example.com 2000]
+    for {set n 0} {$n < 51} {incr n} {::admintest::member member-$n@example.com $n}
+    ::admintest::grant {admin admin@example.com} {admin users.manage}
+    ::admintest::login $admin
+    set first [::admintest::get]
+    set second [::admintest::get /accounts/admin/users?page=2]
+    set before [::web::user::admin_user_rows $::admintest::store 1]
+    set body [dict get $first body]
+    set result [list [dict get $before total] [dict get $before pages] [llength [dict get $before items]] \
+        [regexp -all {<tr>} $body] [regexp -all {<tr>} [dict get $second body]] \
+        [string match {*admin/users?page=2*} $body] [string match {*admin/users?page=1*} [dict get $second body]] \
+        [string match {*member-0@example.com*} [dict get $second body]] \
+        [string match {*member-0@example.com*} $body]]
+    foreach query {page=0 page=-1 page=abc page=01 page=1&page=2 tenant=other page=3} {
+        lappend result [dict get [::admintest::get /accounts/admin/users?$query] statusCode]
+    }
+    lappend result [dict get [::admintest::get /accounts/admin/users POST] statusCode] \
+        [expr {$before eq [::web::user::admin_user_rows $::admintest::store 1]}]
+    set result
+} -cleanup ::admintest::cleanup -result {52 2 50 51 3 1 1 1 0 400 400 400 400 400 400 404 405 1}
+cleanupTests

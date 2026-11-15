@@ -71,6 +71,14 @@
             "username"
           ],
           "unique": true
+        },
+        {
+          "name": "web_user_registered",
+          "columns": [
+            "tenant",
+            "created_at",
+            "id"
+          ]
         }
       ]
     },

@@ -174,6 +174,8 @@ proc ::web::user::render {config view token {extra {}}} {
     dict set context verification_emails_enabled [list BOOL [property $store verification_emails_enabled]]
     dict set context mfa_enabled [list BOOL $enabled]
     dict set context signed_in [list BOOL [expr {$user ne {}}]]
+    dict set context can_manage_users [list BOOL [expr {$user ne {} && [has_permission $store [dict get $user id] users.manage]}]]
+    dict set context admin_view {BOOL 0}
     set templates [dict get $config -templates]
     response 200 [::jinja2::render [dict get $templates form.html.jinja] \
         [::tjson::typed_to_json [list M $context]] -templates $templates -path form.html.jinja]
