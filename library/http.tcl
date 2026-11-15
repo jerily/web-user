@@ -46,6 +46,12 @@ proc ::web::user::current_user {config request {context {}}} {
 }
 # Allow a host action only for an authenticated account.
 proc ::web::user::authorize {config request context action path} {expr {[current_user $config $request $context] ne {}}}
+# Bind a named permission to the generic wiki/blog authorization callback.
+# Read grants on every call so revocation also applies to open editor forms.
+proc ::web::user::authorize_permission {config permission request context action path} {
+    set user [current_user $config $request $context]
+    expr {$user ne {} && [has_permission [dict get $config -store] [dict get $user id] $permission]}
+}
 # Issue or validate a session-bound CSRF token and origin.
 proc ::web::user::csrf {config action request context submitted} {
     set token [cookie_token $config $request]

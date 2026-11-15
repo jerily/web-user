@@ -53,3 +53,32 @@ group permissions.
 `example-community` syncs at startup. `ttrek.sh` calls the same function through
 its private `task_sync_access` patch task. Neither approach needs a separate
 authorization package or a request-time schema change.
+
+## Content editing
+
+`wiki.edit` allows creating and editing wiki pages, including a wiki-backed
+homepage. `blog.edit` allows creating and editing blog posts. They are independent
+of each other and of `forum.moderate`.
+
+```ini
+[groups]
+editor = mira@example.com
+
+[permissions]
+editor = wiki.edit, blog.edit
+```
+
+Bind the permission to the content package's authorization callback:
+
+```tcl
+::web::wiki::mount $router -store $wikiStore \
+    -authorize [list ::web::user::authorize_permission $accountMount wiki.edit] \
+    -csrf [list ::web::user::csrf $accountMount] -config {allow_create true}
+::web::blog::mount $router -store $blogStore \
+    -authorize [list ::web::user::authorize_permission $accountMount blog.edit] \
+    -csrf [list ::web::user::csrf $accountMount] -config {allow_create true}
+```
+
+The adapter uses the signed account session and checks current grants on every
+call. The content packages use the same policy to generate edit/create links and
+to authorize GET/POST editor routes. A valid CSRF token alone does not grant access.

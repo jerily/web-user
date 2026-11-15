@@ -65,4 +65,25 @@ test access-4 {deactivation and email changes revoke grants from current account
         [dict create active 1 email_key [::web::user::email_key $store another@example.com]]
     list $inactive [::web::user::permissions $store $uid]
 } -cleanup ::accesstest::cleanup -result {{} {}}
+test access-5 {the content adapter requires a signed-in account and the exact current permission} -setup ::accesstest::setup -body {
+    set store $::accesstest::store
+    set uid [::accesstest::member mira@example.com]
+    set router [::tpathexp::router]
+    try {
+        set mount [::web::user::mount $router -store $store -config {origin http://localhost:8080}]
+        set token [::web::user::new_session $store auth $uid]
+        set cookie [lindex [split [dict get [::web::user::set_cookie $mount {} $token] headers Set-Cookie] {;}] 0]
+        set request [dict create method GET path /wiki/page headers [dict create cookie $cookie]]
+        set result [list [::web::user::authorize_permission $mount wiki.edit $request {} edit /page]]
+        ::web::user::sync_access $store {editors mira@example.com} {editors wiki.edit}
+        foreach action {create edit save} {
+            lappend result [::web::user::authorize_permission $mount wiki.edit $request {} $action /page]
+        }
+        lappend result [::web::user::authorize_permission $mount blog.edit $request {} edit /page] \
+            [::web::user::authorize_permission $mount wiki.edit {method GET path /wiki/page} [dict create user_id $uid] edit /page]
+        ::web::user::sync_access $store {} {}
+        lappend result [::web::user::authorize_permission $mount wiki.edit $request {} save /page]
+        set result
+    } finally {$router destroy}
+} -cleanup ::accesstest::cleanup -result {0 1 1 1 0 0 0}
 cleanupTests
