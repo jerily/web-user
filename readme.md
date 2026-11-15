@@ -10,7 +10,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.4.0
+package require web-user 0.5.0
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
@@ -245,3 +245,22 @@ All database operations use `tpersist`. Rerun the explicit `initdb` maintenance
 operation to add these indexes to existing databases. Index creation is
 idempotent and never runs in request handlers. The example-community integration
 suite verifies the access paths with SQLite and PostgreSQL EXPLAIN plans.
+
+## Groups and permissions
+
+Use `sync_access` to apply configured group membership and permission grants,
+then `has_permission` to authorize actions for a verified account. See
+[Groups and permissions](docs/access.md) for INI examples, startup/maintenance
+integration, and revocation behavior.
+
+## User administration
+
+Accounts with `users.manage` get an **Account → Manage users** link. The directory
+lists registration, last sign-in and last visit dates, authenticator status and
+configured groups. Sort by recent sign-in, recent activity or newest registration,
+with tenant-scoped pagination. See [user administration](docs/admin.md) for setup and
+the display contract.
+
+Account identities use `user_<ksuid>` across registration, account and profile
+records. See [user ID migration](docs/user-ids.md) for the explicit maintenance
+step that updates existing identities and their encrypted data and sessions.

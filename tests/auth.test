@@ -102,7 +102,7 @@ test auth-1 {register verifies email, KSUID id, login rotates and logout revokes
     set user [::authtest::me]
     set uid [dict get $user id]
     set stored [::web::user::user_by_id $::authtest::store $uid]
-    set result [list $login [dict get $user email] [regexp {^[A-Za-z0-9]{27}$} $uid] [expr {$old ne $::authtest::cookie}] \
+    set result [list $login [dict get $user email] [regexp {^user_[A-Za-z0-9]{27}$} $uid] [expr {$old ne $::authtest::cookie}] \
         [expr {[dict get $stored email] ne "person@example.com"}] \
         [string match {$2b$12$*} [::web::user::unseal $::authtest::store [dict get $stored password] [list password-hash $uid]]]]
     set token [::authtest::token]

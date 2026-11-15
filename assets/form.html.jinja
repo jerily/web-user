@@ -9,6 +9,7 @@
 <p class="account-identity">Signed in as <strong>{{ email }}</strong></p>
 {% if email_verified %}<p class="account-verified">Email verified</p>{% else %}<p>Your email is not verified yet.</p>{% if verification_emails_enabled %}<form method="post" action="{{ prefix }}/resend-verification{{ return_query }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-secondary" type="submit">Verify email</button></form>{% endif %}{% endif %}
 <p><a href="{{ prefix }}/change-password">Change password</a></p>
+{% if can_manage_users %}<p><a href="{{ prefix }}/admin/users">Manage users</a></p>{% endif %}
 {% if collect_profile %}<p>{{ display_name }}{% if username %} · @{{ username }}{% endif %} · <a href="{{ prefix }}/profile">Edit profile</a></p>{% endif %}
 {% if mfa_enabled %}<p>Authenticator enabled.</p><a href="{{ prefix }}/two-factor/disable">Disable authenticator</a>{% elif email_verified %}<p>Add an authenticator app to protect your account.</p><a href="{{ prefix }}/two-factor/setup">Set up authenticator</a>{% endif %}
 <form method="post" action="{{ prefix }}/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-secondary" type="submit">Sign out</button></form>

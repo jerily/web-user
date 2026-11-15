@@ -66,7 +66,7 @@ set accounts [::web::user::mount $router -store $accountStore -config [dict crea
     -config [dict create master_template [dict get $site master_template]]
 foreach kind {wiki blog} {
     ::web::${kind}::mount $router -store [dict get $contentStores $kind] \
-        -prefix /$kind -authorize [list ::web::user::authorize $accounts] \
+        -prefix /$kind -authorize [list ::web::user::authorize_permission $accounts $kind.edit] \
         -csrf [list ::web::user::csrf $accounts] \
         -context [list ::site_properties $accounts] \
         -config [dict create allow_create true \
@@ -80,15 +80,19 @@ and returns typed Jinja properties. For example:
 ```tcl
 proc site_properties {accounts request context} {
     set user [::web::user::current_user $accounts $request $context]
-    dict create show_edit_controls [list BOOL [expr {$user ne {}}]] \
-        signed_in [list BOOL [expr {$user ne {}}]]
+    dict create signed_in [list BOOL [expr {$user ne {}}]]
 }
 ```
 
 Values are evaluated once per request and override the template context for that
 request only. Hosts may provide any trusted typed properties, not just editing
-visibility. `show_edit_controls` defaults to true when no callback is supplied.
-This controls presentation; `-authorize` and `-csrf` still protect editor routes.
+visibility. Wiki/blog links are generated only when their authorization callback
+allows the corresponding action. `show_edit_controls false` can hide them
+further; it cannot grant access. `-authorize` and `-csrf` protect editor routes.
+
+Grant `wiki.edit` for creating/editing wiki pages and `blog.edit` for
+creating/editing blog posts through [groups and permissions](docs/access.md).
+The two grants are independent, and `forum.moderate` implies neither.
 
 The content store uses
 `-domain`; use the same site identity as the account store's `-tenant` to keep
@@ -285,8 +289,11 @@ as though they were anonymous page visits.
 `current_user mount request ?context?` returns an empty dictionary or the signed-in
 member's `id email first_name last_name display_name username email_verified
 mfa_enabled` fields. Pending verification/recovery/MFA sessions return empty.
-`authorize mount request context action path` accepts any authenticated
-member; wrap it to add your own roles. `csrf mount issue request context {}` returns
+`authorize_permission mount permission request context action path` checks the
+signed-in account's current grant for the exact permission. Bind `wiki.edit` or
+`blog.edit` as shown above. Revocation applies to already-open forms on submission.
+`authorize mount request context action path` only checks authentication; use the
+permission adapter for content editing. `csrf mount issue request context {}` returns
 a token, and `csrf mount verify request context submitted` returns a boolean.
 The wiki/blog editing callback contract matches these signatures exactly.
 
@@ -440,3 +447,11 @@ period delays physical deletion only: expired sessions and codes remain unusable
 For explicit concurrency validation, set `WEB_USER_TEST_PG` to a disposable
 PostgreSQL connection-options list and run `tclsh9.1 tests/concurrency.tcl`. The
 migration test uses a separate empty database selected by `WEB_USER_MIGRATION_PG`.
+
+## User administration
+
+`GET <prefix>/admin/users` is the user directory, protected by `users.manage`.
+The Account page shows **Manage users** only to authorized accounts. It lists
+registered accounts, registration/sign-in/visit times, MFA state and configured
+groups, with three sort options and 50 users per page. See [user administration](docs/admin.md) for permissions,
+privacy, templates and schema initialization.

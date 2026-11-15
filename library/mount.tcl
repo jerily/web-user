@@ -33,7 +33,7 @@ proc ::web::user::mount {router args} {
     dict set config -session-cookie [::tsession::cookie::create -name $name -mac [dict get $store -mac] \
         -secure [expr {[dict get $store -env] eq "PROD"}]]
     set templates {}
-    foreach filename {page.html.jinja form.html.jinja profile.html.jinja} {dict set templates $filename [read_text [file join $root assets $filename]]}
+    foreach filename {page.html.jinja form.html.jinja profile.html.jinja admin-users.html.jinja} {dict set templates $filename [read_text [file join $root assets $filename]]}
     set templates [dict merge $templates [dict get $settings templates]]
     if {[dict get $settings master_template] ne {}} {dict set templates page.html.jinja [dict get $settings master_template]}
     dict for {name text} $templates {::jinja2::validate $text -templates $templates -path $name}
@@ -43,11 +43,13 @@ proc ::web::user::mount {router args} {
     # Check collisions before installing any route.
     foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/resend-verification $prefix/login \
         $prefix/forgot $prefix/reset $prefix/change-password $prefix/close-account $prefix/two-factor $prefix/two-factor/setup \
-        $prefix/two-factor/disable $prefix/logout $prefix/profile] {
+        $prefix/two-factor/disable $prefix/logout $prefix/profile $prefix/admin/users $prefix/_assets/admin.css] {
         if {[dict get [$router match GET $path] statusCode] != 404} {error "route already mounted: $path"}
     }
     $router add GET $prefix [list ::web::user::account $config] -strict true
     $router add GET $prefix/ [list ::web::user::account $config] -strict true
+    $router add GET $prefix/admin/users [list ::web::user::admin_users $config] -strict true
+    $router add GET $prefix/_assets/admin.css ::web::user::admin_stylesheet -strict true
     $router add {GET POST} $prefix/register [list ::web::user::register $config] -strict true
     $router add {GET POST} $prefix/verify [list ::web::user::verify $config] -strict true
     $router add POST $prefix/resend-verification [list ::web::user::resend_verification $config] -strict true

@@ -51,6 +51,16 @@
         },
         "username": {
           "type": "text"
+        },
+        "last_login_at": {
+          "type": "bigint",
+          "not_null": true,
+          "default": 0
+        },
+        "last_seen_at": {
+          "type": "bigint",
+          "not_null": true,
+          "default": 0
         }
       },
       "primary_key": [
@@ -71,6 +81,30 @@
             "username"
           ],
           "unique": true
+        },
+        {
+          "name": "web_user_registered",
+          "columns": [
+            "tenant",
+            "created_at",
+            "id"
+          ]
+        },
+        {
+          "name": "web_user_last_login",
+          "columns": [
+            "tenant",
+            "last_login_at",
+            "id"
+          ]
+        },
+        {
+          "name": "web_user_last_visit",
+          "columns": [
+            "tenant",
+            "last_seen_at",
+            "id"
+          ]
         }
       ]
     },
@@ -218,6 +252,77 @@
       },
       "primary_key": [
         "name"
+      ]
+    },
+    {
+      "name": "web_user_groups",
+      "columns": {
+        "tenant": {
+          "type": "text",
+          "not_null": true
+        },
+        "group_name": {
+          "type": "text",
+          "not_null": true
+        }
+      },
+      "primary_key": [
+        "tenant",
+        "group_name"
+      ]
+    },
+    {
+      "name": "web_user_group_members",
+      "columns": {
+        "tenant": {
+          "type": "text",
+          "not_null": true
+        },
+        "group_name": {
+          "type": "text",
+          "not_null": true
+        },
+        "email_key": {
+          "type": "text",
+          "not_null": true
+        }
+      },
+      "primary_key": [
+        "tenant",
+        "group_name",
+        "email_key"
+      ],
+      "indexes": [
+        {
+          "name": "web_user_group_email",
+          "columns": [
+            "tenant",
+            "email_key",
+            "group_name"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "web_user_group_permissions",
+      "columns": {
+        "tenant": {
+          "type": "text",
+          "not_null": true
+        },
+        "group_name": {
+          "type": "text",
+          "not_null": true
+        },
+        "permission": {
+          "type": "text",
+          "not_null": true
+        }
+      },
+      "primary_key": [
+        "tenant",
+        "group_name",
+        "permission"
       ]
     }
   ]

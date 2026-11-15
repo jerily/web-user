@@ -42,10 +42,17 @@ proc ::web::user::current_user {config request {context {}}} {
     set store [dict get $config -store]
     set user [authenticated $store [session $store [cookie_token $config $request]]]
     if {$user eq {}} {return {}}
+    record_visit $store $user
     public_user $store $user
 }
 # Allow a host action only for an authenticated account.
 proc ::web::user::authorize {config request context action path} {expr {[current_user $config $request $context] ne {}}}
+# Bind a named permission to the generic wiki/blog authorization callback.
+# Read grants on every call so revocation also applies to open editor forms.
+proc ::web::user::authorize_permission {config permission request context action path} {
+    set user [current_user $config $request $context]
+    expr {$user ne {} && [has_permission [dict get $config -store] [dict get $user id] $permission]}
+}
 # Issue or validate a session-bound CSRF token and origin.
 proc ::web::user::csrf {config action request context submitted} {
     set token [cookie_token $config $request]
@@ -168,6 +175,8 @@ proc ::web::user::render {config view token {extra {}}} {
     dict set context verification_emails_enabled [list BOOL [property $store verification_emails_enabled]]
     dict set context mfa_enabled [list BOOL $enabled]
     dict set context signed_in [list BOOL [expr {$user ne {}}]]
+    dict set context can_manage_users [list BOOL [expr {$user ne {} && [has_permission $store [dict get $user id] users.manage]}]]
+    dict set context admin_view {BOOL 0}
     set templates [dict get $config -templates]
     response 200 [::jinja2::render [dict get $templates form.html.jinja] \
         [::tjson::typed_to_json [list M $context]] -templates $templates -path form.html.jinja]
@@ -226,6 +235,7 @@ proc ::web::user::handle {config view handler challenge request context} {
         set store [dict get $config -store]
         set token [cookie_token $config $request]
         set row [session $store $token]
+        record_visit $store [authenticated $store $row]
         set returnTo [requested_return_to $request]
         dict set context return_to $returnTo
         if {[dict get $request method] ne "POST"} {

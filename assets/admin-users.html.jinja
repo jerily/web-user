@@ -1,0 +1,44 @@
+{% extends "page.html.jinja" %}
+{% block body %}
+<link rel="stylesheet" href="{{ prefix }}/_assets/admin.css">
+<section class="user-admin" aria-labelledby="user-admin-title">
+  <a class="user-admin-back" href="{{ prefix }}">← Account</a>
+  <header class="user-admin-heading">
+    <div><p class="user-admin-eyebrow">Administration</p><h1 id="user-admin-title">Manage users</h1><p>Registration, account security, and group membership.</p></div>
+    <p class="user-admin-total"><strong>{{ total }}</strong> registered users</p>
+  </header>
+  <nav class="user-admin-sort" aria-label="Sort users">
+    <a href="{{ prefix }}/admin/users?sort=last_login"{% if sort == "last_login" %} aria-current="page"{% endif %}>Recently signed in</a>
+    <a href="{{ prefix }}/admin/users?sort=last_visit"{% if sort == "last_visit" %} aria-current="page"{% endif %}>Recently active</a>
+    <a href="{{ prefix }}/admin/users?sort=registered"{% if sort == "registered" %} aria-current="page"{% endif %}>Newest registrations</a>
+  </nav>
+  <div class="user-admin-table" role="region" aria-label="Registered users" tabindex="0">
+    <table>
+      <thead><tr><th scope="col">User</th><th scope="col"{% if sort == "last_login" %} aria-sort="descending"{% endif %}>Last sign-in</th><th scope="col"{% if sort == "last_visit" %} aria-sort="descending"{% endif %}>Last visit</th><th scope="col"{% if sort == "registered" %} aria-sort="descending"{% endif %}>Registered</th><th scope="col">Authenticator / MFA</th><th scope="col">Groups</th></tr></thead>
+      <tbody>
+      {% for user in users %}
+        <tr>
+          <td>
+            {% if user.name %}<strong class="user-admin-name">{{ user.name }}</strong>{% endif %}
+            <span class="user-admin-email">{{ user.email }}</span>
+            {% if user.username %}<small>@{{ user.username }}</small>{% endif %}
+            {% if not user.active %}<span class="user-admin-badge">Inactive</span>{% endif %}
+            {% if not user.verified %}<span class="user-admin-badge">Email unverified</span>{% endif %}
+          </td>
+          <td>{% if user.last_login_datetime %}<time datetime="{{ user.last_login_datetime }}">{{ user.last_login_date }}<small>{{ user.last_login_time }}</small></time>{% else %}<span class="user-admin-muted">{{ user.last_login_label }}</span>{% endif %}</td>
+          <td>{% if user.last_visit_datetime %}<time datetime="{{ user.last_visit_datetime }}">{{ user.last_visit_date }}<small>{{ user.last_visit_time }}</small></time>{% else %}<span class="user-admin-muted">{{ user.last_visit_label }}</span>{% endif %}</td>
+          <td><time datetime="{{ user.registered_datetime }}">{{ user.registered_date }}<small>{{ user.registered_time }}</small></time></td>
+          <td>{% if user.mfa_enabled %}<span class="user-admin-badge user-admin-enabled">On</span>{% else %}<span class="user-admin-badge">Off</span>{% endif %}</td>
+          <td><div class="user-admin-groups">{% for group in user.groups %}<span class="user-admin-badge">{{ group }}</span>{% else %}<span class="user-admin-muted">No groups</span>{% endfor %}</div></td>
+        </tr>
+      {% else %}<tr><td colspan="6">No registered users yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <nav class="user-admin-pagination" aria-label="User pages">
+    {% if previous_url %}<a href="{{ previous_url }}">← Previous</a>{% endif %}
+    <span>Page {{ page }} of {{ pages }}</span>
+    {% if next_url %}<a href="{{ next_url }}">Next →</a>{% endif %}
+  </nav>
+</section>
+{% endblock %}
