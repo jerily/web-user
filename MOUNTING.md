@@ -452,6 +452,6 @@ migration test uses a separate empty database selected by `WEB_USER_MIGRATION_PG
 
 `GET <prefix>/admin/users` is the user directory, protected by `users.manage`.
 The Account page shows **Manage users** only to authorized accounts. It lists
-registered accounts, registration time, MFA state and configured groups, with
-50 users per page. See [user administration](docs/admin.md) for permissions,
+registered accounts, registration/sign-in/visit times, MFA state and configured
+groups, with three sort options and 50 users per page. See [user administration](docs/admin.md) for permissions,
 privacy, templates and schema initialization.

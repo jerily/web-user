@@ -1,0 +1,100 @@
+package require tcltest
+package require web-user
+namespace import ::tcltest::*
+if {![llength [info commands ::authtest::setup]]} {
+    set savedMatch [::tcltest::configure -match]
+    ::tcltest::configure -match __helpers_only__
+    source [file join [file dirname [info script]] auth.test]
+    ::tcltest::configure -match $savedMatch
+}
+namespace eval ::idtest {}
+proc ::idtest::seed {store id email {pending 0}} {
+    set row [dict create id $id email_key [::web::user::email_key $store $email] \
+        email [::web::user::seal $store $email [list email $id]] \
+        password [::web::user::seal $store [::web::user::password_hash $::authtest::password {bcrypt_cost 4}] [list password-hash $id]] \
+        username {} created_at 123]
+    if {$pending} {
+        foreach {field value} {first_name Rowan last_name Fern display_name Rowan} {
+            dict set row $field [::web::user::seal $store $value [list profile $id $field]]
+        }
+        dict set row expires [expr {[clock seconds] + 900}]
+        ::web::user::insert $store web_user_registrations $row
+    } else {
+        set secret JBSWY3DPEHPK3PXP
+        ::web::user::insert $store web_user_users [dict merge $row [dict create active 1 verified 1 \
+            mfa_secret [::web::user::seal $store $secret [list mfa $id]] last_step 7 revision 0 last_login_at 456 last_seen_at 789]]
+        ::web::user::save_profile $store $id {first_name Mira last_name Fern display_name Mira}
+    }
+}
+
+foreach mode {LOCAL PROD} {
+test user-ids-1-$mode {migration preserves encrypted credentials, profiles, sessions, MFA setup, verification and tenant isolation} -constraints [expr {$mode eq "PROD" ? "postgres" : {}}] -setup {
+    ::authtest::setup $mode {bcrypt_cost 4}
+} -body {
+    set store $::authtest::store
+    set old [::ksuid::generate_ksuid]
+    set pending [::ksuid::generate_ksuid]
+    set other [dict replace $store -tenant other-tenant]
+    ::idtest::seed $store $old mira@example.com
+    ::idtest::seed $store $pending rowan@example.com 1
+    ::idtest::seed $other $old other@example.com
+    ::web::user::sync_access $store {admin mira@example.com} {admin users.manage}
+    set auth [::web::user::new_session $store auth $old {} 1]
+    set authRow [::web::user::session $store $auth]
+    ::tsession::sql::update [dict get $store -sessions] [dict get $authRow id] \
+        [dict create pending_secret [::web::user::seal $store SETUP-SECRET [list mfa $old]]]
+    set mfa [::web::user::new_session $store two-factor $old]
+    set reset [::web::user::new_session $store reset $old 123456]
+    set verify [::web::user::new_session $store verify $pending 000123]
+    set result [list [::web::user::migrate_user_ids $store] [::web::user::migrate_user_ids $store]]
+    set user [::web::user::user_by_id $store user_$old]
+    set session [::web::user::session $store $auth]
+    lappend result [::web::user::password_ok $store $user $::authtest::password] \
+        [dict get [::web::user::public_user $store $user] email] \
+        [dict get [::web::user::profile_names $store user_$old] first_name] \
+        [::web::user::unseal $store [dict get $user mfa_secret] [list mfa user_$old]] \
+        [::web::user::unseal $store [dict get $session pending_secret] [list mfa user_$old]] \
+        [expr {[dict get $session uid] eq "user_$old" && [dict get $session stay_signed_in]}] \
+        [expr {[dict get [::web::user::session $store $mfa] uid] eq "user_$old"}] \
+        [::web::user::has_permission $store user_$old users.manage] \
+        [dict get $user last_login_at] [dict get $user last_seen_at] \
+        [expr {[::web::user::user_by_id $store $old] eq {} && [::web::user::user_by_id $other $old] ne {}}]
+    ::web::user::check_code $store [::web::user::session $store $reset] reset 123456
+    ::tpersist::db_transaction $::authtest::db {
+        ::web::user::action_verify $::authtest::config [::web::user::session $store $verify] {code 000123}
+    }
+    lappend result [dict get [::web::user::profile_names $store user_$pending] first_name] \
+        [::web::user::password_ok $store [::web::user::user_by_id $store user_$pending] $::authtest::password]
+    set result
+} -cleanup ::authtest::cleanup -result {{users 1 registrations 1 profiles 1 sessions 4} {users 0 registrations 0 profiles 0 sessions 0} 1 mira@example.com Mira JBSWY3DPEHPK3PXP SETUP-SECRET 1 1 1 456 789 1 Rowan 1}
+
+test user-ids-2-$mode {a prefixed destination collision leaves the original identities untouched} -constraints [expr {$mode eq "PROD" ? "postgres" : {}}] -setup {
+    ::authtest::setup $mode {bcrypt_cost 4}
+} -body {
+    set store $::authtest::store
+    set old [::ksuid::generate_ksuid]
+    ::idtest::seed $store $old mira@example.com
+    ::idtest::seed $store user_$old collision@example.com
+    set before [::web::user::user_by_id $store $old]
+    set failed [catch {::web::user::migrate_user_ids $store}]
+    list $failed [expr {$before eq [::web::user::user_by_id $store $old]}] \
+        [llength [::web::user::rows $store web_user_users]]
+} -cleanup ::authtest::cleanup -result {1 1 2}
+
+test user-ids-3-$mode {unreadable ciphertext rolls back every change, including session subjects} -constraints [expr {$mode eq "PROD" ? "postgres" : {}}] -setup {
+    ::authtest::setup $mode {bcrypt_cost 4}
+} -body {
+    set store $::authtest::store
+    set first [::ksuid::generate_ksuid]
+    set second [::ksuid::generate_ksuid]
+    ::idtest::seed $store $first mira@example.com
+    ::idtest::seed $store $second rowan@example.com
+    set token [::web::user::new_session $store auth $first]
+    ::web::user::update $store web_user_users [dict create id $second] {email corrupt}
+    set failed [catch {::web::user::migrate_user_ids $store}]
+    list $failed [expr {[::web::user::user_by_id $store $first] ne {} && [::web::user::user_by_id $store user_$first] eq {}}] \
+        [expr {[dict get [::web::user::session $store $token] uid] eq $first}] \
+        [dict get [::web::user::profile_names $store $first] first_name]
+} -cleanup ::authtest::cleanup -result {1 1 1 Mira}
+}
+cleanupTests

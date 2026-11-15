@@ -42,6 +42,7 @@ proc ::web::user::current_user {config request {context {}}} {
     set store [dict get $config -store]
     set user [authenticated $store [session $store [cookie_token $config $request]]]
     if {$user eq {}} {return {}}
+    record_visit $store $user
     public_user $store $user
 }
 # Allow a host action only for an authenticated account.
@@ -234,6 +235,7 @@ proc ::web::user::handle {config view handler challenge request context} {
         set store [dict get $config -store]
         set token [cookie_token $config $request]
         set row [session $store $token]
+        record_visit $store [authenticated $store $row]
         set returnTo [requested_return_to $request]
         dict set context return_to $returnTo
         if {[dict get $request method] ne "POST"} {

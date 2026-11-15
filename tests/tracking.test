@@ -1,0 +1,114 @@
+package require tcltest
+package require web-user
+namespace import ::tcltest::*
+if {![llength [info commands ::authtest::setup]]} {
+    set savedMatch [::tcltest::configure -match]
+    ::tcltest::configure -match __helpers_only__
+    source [file join [file dirname [info script]] auth.test]
+    ::tcltest::configure -match $savedMatch
+}
+namespace eval ::tracking {}
+proc ::tracking::setup {} {
+    ::authtest::setup LOCAL {bcrypt_cost 4 login_captcha_after 0}
+    ::authtest::register
+    set ::tracking::uid [dict get [::web::user::user_by_email $::authtest::store person@example.com] id]
+    set ::tracking::now [clock seconds]
+    rename ::clock ::tracking::clock
+    proc ::clock {args} {
+        if {$args eq "seconds"} {return $::tracking::now}
+        ::tracking::clock {*}$args
+    }
+}
+proc ::tracking::value {key} {dict get [::web::user::user_by_id $::authtest::store $::tracking::uid] $key}
+proc ::tracking::cleanup {} {
+    rename ::clock {}
+    rename ::tracking::clock ::clock
+    ::authtest::cleanup
+}
+
+test tracking-1 {only successful authentication records sign-in; visits are throttled without changing sign-in time} -setup ::tracking::setup -body {
+    set result [list [::tracking::value last_login_at] [::tracking::value last_seen_at]]
+    ::authtest::call GET /user/login
+    lappend result [::authtest::call POST /user/login {email person@example.com password wrong}] [::tracking::value last_login_at]
+    lappend result [::authtest::login]
+    set signedIn $::tracking::now
+    lappend result [expr {[::tracking::value last_login_at] == $signedIn && [::tracking::value last_seen_at] == $signedIn}]
+    incr ::tracking::now 59
+    ::authtest::call GET /user
+    lappend result [expr {[::tracking::value last_seen_at] == $signedIn}]
+    incr ::tracking::now
+    ::authtest::call GET /user
+    lappend result [expr {[::tracking::value last_seen_at] == $::tracking::now && [::tracking::value last_login_at] == $signedIn}]
+    incr ::tracking::now 60
+    set request [dict create method GET path /forum headers [dict create cookie $::authtest::cookie]]
+    ::web::user::current_user $::authtest::config $request
+    set stale [::web::user::user_by_id $::authtest::store $::tracking::uid]
+    lappend result [expr {[dict get $stale last_seen_at] == $::tracking::now}]
+    incr ::tracking::now 60
+    ::web::user::current_user $::authtest::config $request
+    incr ::tracking::now
+    ::web::user::record_visit $::authtest::store $stale
+    lappend result [expr {[::tracking::value last_seen_at] == $::tracking::now - 1}]
+    ::authtest::call POST /user/change-password [dict create current_password $::authtest::password password {a different password} confirm_password {a different password}]
+    lappend result [expr {[::tracking::value last_login_at] == $signedIn}]
+    set result
+} -cleanup ::tracking::cleanup -result {0 0 401 0 200 1 1 1 1 1 1}
+
+test tracking-2 {MFA sign-in is recorded only after a valid final factor; enrollment and failures do not count} -setup ::tracking::setup -body {
+    ::authtest::login
+    set signedIn [::tracking::value last_login_at]
+    incr ::tracking::now
+    set secret [::authtest::setup_mfa]
+    set result [list [expr {[::tracking::value last_login_at] == $signedIn}]]
+    ::authtest::call POST /user/logout
+    ::authtest::login
+    lappend result [expr {[::tracking::value last_login_at] == $signedIn}]
+    set used [::tracking::value last_step]
+    lappend result [::authtest::call POST /user/two-factor [dict create code [::tmfa::get_hotp $secret $used 6 SHA1]]] \
+        [expr {[::tracking::value last_login_at] == $signedIn}]
+    ::web::user::update $::authtest::store web_user_users [dict create id $::tracking::uid] {last_step -1}
+    lappend result [::authtest::call POST /user/two-factor [dict create code [::tmfa::get_totp $secret 6 30 SHA1]]] \
+        [expr {[::tracking::value last_login_at] == $::tracking::now}]
+    set result
+} -cleanup ::tracking::cleanup -result {1 1 401 1 200 1}
+
+test tracking-3 {anonymous, pending MFA and inactive sessions do not record visits; reading a profile does not touch its owner} -setup ::tracking::setup -body {
+    ::authtest::login
+    set before [::tracking::value last_seen_at]
+    incr ::tracking::now 120
+    ::web::user::public_profile $::authtest::store $::tracking::uid
+    ::web::user::current_user $::authtest::config {method GET path /forum}
+    set result [list [expr {[::tracking::value last_seen_at] == $before}]]
+    set token [::web::user::new_session $::authtest::store two-factor $::tracking::uid]
+    set cookie [lindex [split [dict get [::web::user::set_cookie $::authtest::config {} $token] headers Set-Cookie] {;}] 0]
+    ::web::user::current_user $::authtest::config [dict create headers [dict create cookie $cookie]]
+    lappend result [expr {[::tracking::value last_seen_at] == $before}]
+    ::web::user::update $::authtest::store web_user_users [dict create id $::tracking::uid] {active 0}
+    ::authtest::call GET /user
+    lappend result [expr {[::tracking::value last_seen_at] == $before}]
+    set result
+} -cleanup ::tracking::cleanup -result {1 1 1}
+
+test tracking-4 {a failed session rotation rolls back the successful-sign-in timestamp} -setup ::tracking::setup -body {
+    ::authtest::call GET /user/login
+    rename ::web::user::rotate ::tracking::rotate
+    proc ::web::user::rotate {args} {error {Session storage failed}}
+    try {
+        set failed [catch {::authtest::login}]
+        list $failed [::tracking::value last_login_at] [::tracking::value last_seen_at]
+    } finally {
+        rename ::web::user::rotate {}
+        rename ::tracking::rotate ::web::user::rotate
+    }
+} -cleanup ::tracking::cleanup -result {1 0 0}
+test tracking-5 {partial or empty visit fields are safe and the database still throttles writes} -setup ::tracking::setup -body {
+    set user [::web::user::user_by_id $::authtest::store $::tracking::uid]
+    set partial [dict remove $user last_seen_at]
+    set first [::web::user::record_visit $::authtest::store $partial]
+    incr ::tracking::now 30
+    set second [::web::user::record_visit $::authtest::store $partial]
+    incr ::tracking::now 30
+    set third [::web::user::record_visit $::authtest::store [dict replace $user last_seen_at {}]]
+    list $first $second $third [expr {[::tracking::value last_seen_at] == $::tracking::now}]
+} -cleanup ::tracking::cleanup -result {1 0 1 1}
+cleanupTests

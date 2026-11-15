@@ -70,7 +70,7 @@ foreach scenario {email username} {
         ::web::user::initdb [dict get $store -connection]
         set password [::web::user::password_hash {a shared test password} {bcrypt_cost 4}]
         foreach number {1 2} {
-            set id [::ksuid::generate_ksuid]
+            set id user_[::ksuid::generate_ksuid]
             set address [expr {$scenario eq "email" ? "same@example.com" : "user$number@example.com"}]
             set username [expr {$scenario eq "username" ? "shared" : "user$number"}]
             ::web::user::insert $store web_user_registrations [dict create id $id email_key [::web::user::email_key $store $address] \

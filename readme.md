@@ -256,6 +256,11 @@ integration, and revocation behavior.
 ## User administration
 
 Accounts with `users.manage` get an **Account → Manage users** link. The directory
-lists registration dates, authenticator status and configured groups, with
-tenant-scoped pagination. See [user administration](docs/admin.md) for setup and
+lists registration, last sign-in and last visit dates, authenticator status and
+configured groups. Sort by recent sign-in, recent activity or newest registration,
+with tenant-scoped pagination. See [user administration](docs/admin.md) for setup and
 the display contract.
+
+Account identities use `user_<ksuid>` across registration, account and profile
+records. See [user ID migration](docs/user-ids.md) for the explicit maintenance
+step that updates existing identities and their encrypted data and sessions.

@@ -1,33 +1,39 @@
 # Account administration reads only the current tenant after a permission check.
-proc ::web::user::admin_page_number {request} {
-    set page 1
+proc ::web::user::admin_query {request} {
+    set result {page 1 sort last_login}
     if {[dict exists $request queryString] && [dict get $request queryString] ne {}} {
         set query [form [dict create headers {content-type application/x-www-form-urlencoded} \
             body [dict get $request queryString]] 2048]
         dict for {key value} $query {
-            if {$key ne "page"} {fail 400 "Unknown query parameter."}
-            set page $value
+            if {$key ni {page sort}} {fail 400 "Unknown query parameter."}
+            dict set result $key $value
         }
     }
-    if {![regexp {^[1-9][0-9]{0,6}$} $page]} {fail 400 "Invalid page number."}
-    return $page
+    if {![regexp {^[1-9][0-9]{0,6}$} [dict get $result page]]} {fail 400 "Invalid page number."}
+    admin_sort_column [dict get $result sort]
+    return $result
+}
+proc ::web::user::admin_sort_column {sort} {
+    if {$sort ni {last_login last_visit registered}} {fail 400 "Invalid user order."}
+    dict get {last_login last_login_at last_visit last_seen_at registered created_at} $sort
 }
 
 # Keep count and rows scoped identically. The timestamp/ID index bounds each page.
 # Select only account fields needed for this screen, never password or MFA secrets.
-proc ::web::user::admin_user_rows {store page} {
+proc ::web::user::admin_user_rows {store page {sort last_login}} {
+    set column [admin_sort_column $sort]
     set connection [dict get $store -connection]
     set filter [predicate $store {}]
     set count [db_where [db_select web_user_users -columns [list [db_alias [db_count] total]]] $filter]
     set total [dict get [lindex [dict get [db_execute $connection $count] rows] 0] total]
     set pages [expr {max(1, ($total + 49) / 50)}]
     if {$page > $pages} {fail 404 "Page not found."}
-    set columns {id email email_key username active verified created_at}
+    set columns {id email email_key username active verified created_at last_login_at last_seen_at}
     lappend columns [db_alias [db_ne [db_col mfa_secret] [db_value {} -type text]] mfa_enabled]
     set query [db_order_by [db_where [db_select web_user_users -columns $columns] $filter] \
-        [db_desc [db_col created_at]] [db_desc [db_col id]]]
+        [db_desc [db_col $column]] [db_desc [db_col id]]]
     set query [db_offset [db_limit $query 50] [expr {($page - 1) * 50}]]
-    dict create items [dict get [db_execute $connection $query] rows] page $page pages $pages total $total
+    dict create items [dict get [db_execute $connection $query] rows] page $page pages $pages total $total sort $sort
 }
 
 # Fetch profile and configured group data only for the selected page, in batches.
@@ -68,8 +74,27 @@ proc ::web::user::admin_user_fields {store items} {
         set fields [text_fields [dict create name $fullName username $username \
             email [unseal $store [dict get $row email] [list email $uid]] \
             registered_datetime [clock format [dict get $row created_at] -gmt 1 -format {%Y-%m-%dT%H:%M:%SZ}] \
-            registered_label [clock format [dict get $row created_at] -gmt 1 -format {%Y-%m-%d %H:%M UTC}]]]
+            registered_label [clock format [dict get $row created_at] -gmt 1 -format {%Y-%m-%d %H:%M UTC}] \
+            registered_date [clock format [dict get $row created_at] -gmt 1 -format {%Y-%m-%d}] \
+            registered_time [clock format [dict get $row created_at] -gmt 1 -format {%H:%M UTC}]]]
         dict set fields groups [list L [lmap group $groups {list S $group}]]
+        foreach {name column} {last_login last_login_at last_visit last_seen_at} {
+            set seconds [dict get $row $column]
+            set date {}
+            set label {Not recorded}
+            set day {}
+            set time {}
+            if {$seconds > 0} {
+                set date [clock format $seconds -gmt 1 -format {%Y-%m-%dT%H:%M:%SZ}]
+                set label [clock format $seconds -gmt 1 -format {%Y-%m-%d %H:%M UTC}]
+                set day [clock format $seconds -gmt 1 -format {%Y-%m-%d}]
+                set time [clock format $seconds -gmt 1 -format {%H:%M UTC}]
+            }
+            dict set fields ${name}_datetime [list S $date]
+            dict set fields ${name}_label [list S $label]
+            dict set fields ${name}_date [list S $day]
+            dict set fields ${name}_time [list S $time]
+        }
         foreach key {active verified mfa_enabled} {dict set fields $key [list BOOL [expr {!![dict get $row $key]}]]}
         lappend result [list M $fields]
     }
@@ -82,13 +107,15 @@ proc ::web::user::admin_users {config request context params} {
         if {$current eq {}} {return [sign_in_redirect $config $request]}
         set store [dict get $config -store]
         if {![has_permission $store [dict get $current id] users.manage]} {fail 403 "User management permission is required."}
-        set page [admin_user_rows $store [admin_page_number $request]]
+        set query [admin_query $request]
+        set sort [dict get $query sort]
+        set page [admin_user_rows $store [dict get $query page] $sort]
         set prefix [dict get $config -prefix]
         set fields [text_fields [dict create title {Manage users} brand [dict get $config -config title] \
             prefix $prefix page [dict get $page page] pages [dict get $page pages] total [dict get $page total] \
-            previous_url {} next_url {}]]
-        if {[dict get $page page] > 1} {dict set fields previous_url [list S $prefix/admin/users?page=[expr {[dict get $page page] - 1}]]}
-        if {[dict get $page page] < [dict get $page pages]} {dict set fields next_url [list S $prefix/admin/users?page=[expr {[dict get $page page] + 1}]]}
+            sort $sort previous_url {} next_url {}]]
+        if {[dict get $page page] > 1} {dict set fields previous_url [list S $prefix/admin/users?sort=$sort&page=[expr {[dict get $page page] - 1}]]}
+        if {[dict get $page page] < [dict get $page pages]} {dict set fields next_url [list S $prefix/admin/users?sort=$sort&page=[expr {[dict get $page page] + 1}]]}
         set fields [dict merge [dict get $config -config properties] $fields]
         dict set fields users [list L [admin_user_fields $store [dict get $page items]]]
         dict set fields signed_in {BOOL 1}

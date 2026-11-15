@@ -51,6 +51,16 @@
         },
         "username": {
           "type": "text"
+        },
+        "last_login_at": {
+          "type": "bigint",
+          "not_null": true,
+          "default": 0
+        },
+        "last_seen_at": {
+          "type": "bigint",
+          "not_null": true,
+          "default": 0
         }
       },
       "primary_key": [
@@ -77,6 +87,22 @@
           "columns": [
             "tenant",
             "created_at",
+            "id"
+          ]
+        },
+        {
+          "name": "web_user_last_login",
+          "columns": [
+            "tenant",
+            "last_login_at",
+            "id"
+          ]
+        },
+        {
+          "name": "web_user_last_visit",
+          "columns": [
+            "tenant",
+            "last_seen_at",
             "id"
           ]
         }

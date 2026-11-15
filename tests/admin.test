@@ -16,7 +16,7 @@ proc ::admintest::setup {} {
 proc ::admintest::member {address {timestamp 1763208000} {mfa 0} {verified 1} {active 1} {tenant {}}} {
     set store $::admintest::store
     if {$tenant ne {}} {dict set store -tenant $tenant}
-    set uid [ksuid::generate_ksuid]
+    set uid user_[ksuid::generate_ksuid]
     set secret [expr {$mfa ? [::web::user::seal $store ADMIN-MFA-SECRET [list mfa $uid]] : ""}]
     ::web::user::insert $store web_user_users [dict create id $uid active $active verified $verified \
         email_key [::web::user::email_key $store $address] email [::web::user::seal $store $address [list email $uid]] \
@@ -96,20 +96,42 @@ test admin-4 {pagination covers every registered account with stable newest-firs
     for {set n 0} {$n < 51} {incr n} {::admintest::member member-$n@example.com $n}
     ::admintest::grant {admin admin@example.com} {admin users.manage}
     ::admintest::login $admin
-    set first [::admintest::get]
-    set second [::admintest::get /accounts/admin/users?page=2]
-    set before [::web::user::admin_user_rows $::admintest::store 1]
+    set first [::admintest::get /accounts/admin/users?sort=registered]
+    set second [::admintest::get /accounts/admin/users?sort=registered&page=2]
+    set before [::web::user::admin_user_rows $::admintest::store 1 registered]
     set body [dict get $first body]
     set result [list [dict get $before total] [dict get $before pages] [llength [dict get $before items]] \
         [regexp -all {<tr>} $body] [regexp -all {<tr>} [dict get $second body]] \
-        [string match {*admin/users?page=2*} $body] [string match {*admin/users?page=1*} [dict get $second body]] \
+        [string match {*admin/users?sort=registered&amp;page=2*} $body] [string match {*admin/users?sort=registered&amp;page=1*} [dict get $second body]] \
         [string match {*member-0@example.com*} [dict get $second body]] \
         [string match {*member-0@example.com*} $body]]
     foreach query {page=0 page=-1 page=abc page=01 page=1&page=2 tenant=other page=3} {
         lappend result [dict get [::admintest::get /accounts/admin/users?$query] statusCode]
     }
     lappend result [dict get [::admintest::get /accounts/admin/users POST] statusCode] \
-        [expr {$before eq [::web::user::admin_user_rows $::admintest::store 1]}]
+        [expr {$before eq [::web::user::admin_user_rows $::admintest::store 1 registered]}]
     set result
 } -cleanup ::admintest::cleanup -result {52 2 50 51 3 1 1 1 0 400 400 400 400 400 400 404 405 1}
+test admin-5 {directory orders by successful sign-in, visit or registration and displays recorded dates} -setup ::admintest::setup -body {
+    set admin [::admintest::member admin@example.com 10]
+    set older [::admintest::member older@example.com 20]
+    set newer [::admintest::member newer@example.com 30]
+    ::web::user::update $::admintest::store web_user_users [dict create id $older] {last_login_at 1763208000 last_seen_at 1763208000}
+    ::web::user::update $::admintest::store web_user_users [dict create id $newer] {last_login_at 1763207990 last_seen_at 1763208010}
+    ::admintest::grant {admin admin@example.com} {admin users.manage}
+    ::admintest::login $admin
+    set result {}
+    foreach sort {last_login last_visit registered} {
+        set response [::admintest::get /accounts/admin/users?sort=$sort]
+        set emails {}
+        foreach {tag email} [regexp -all -inline {class="user-admin-email">([^<]+)</span>} [dict get $response body]] {lappend emails $email}
+        lappend result $emails
+    }
+    set html [dict get [::admintest::get] body]
+    lappend result [string match {*sort=last_login" aria-current="page"*} $html]         [string match {*2025-11-15T12:00:00Z*} $html] [string match {*Not recorded*} $html]         [string match {*Last sign-in*Last visit*Registered*} $html]
+    foreach query {sort=unknown sort=created_at sort=last_login&sort=registered sort=last_visit&page=0} {
+        lappend result [dict get [::admintest::get /accounts/admin/users?$query] statusCode]
+    }
+    set result
+} -cleanup ::admintest::cleanup -result {{older@example.com newer@example.com admin@example.com} {admin@example.com newer@example.com older@example.com} {newer@example.com older@example.com admin@example.com} 1 1 1 1 400 400 400 400}
 cleanupTests

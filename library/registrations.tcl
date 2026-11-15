@@ -71,7 +71,7 @@ proc ::web::user::action_register {config row fields} {
     set uid {}
     set code [verification_code]
     if {[one $store web_user_users [dict create email_key $emailKey]] eq {}} {
-        set uid [::ksuid::generate_ksuid]
+        set uid user_[::ksuid::generate_ksuid]
         set pending [dict create id $uid email_key $emailKey email [seal $store $address [list email $uid]] \
             password [seal $store $hash [list password-hash $uid]] username $username first_name {} last_name {} display_name {} created_at [clock seconds] \
             expires [expr {[clock seconds] + [property $store code_ttl]}]]

@@ -105,7 +105,7 @@ proc ::web::user::save_user {store user changes} {
 }
 # TDBC must not infer byte arrays (hex/MAC values) as BLOBs for text columns.
 proc ::web::user::column_type {name} {
-    expr {$name in {active verified last_step revision created_at expires applied_at attempts hits} ? "bigint" : "text"}
+    expr {$name in {active verified last_step revision created_at last_login_at last_seen_at expires applied_at attempts hits} ? "bigint" : "text"}
 }
 # Bind SQL values explicitly, preserving nullable profile fields.
 proc ::web::user::typed_values {values} {

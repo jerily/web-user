@@ -56,6 +56,20 @@ proc ::web::user::authenticated {store row} {
     if {$user eq {} || ![dict get $user active]} {return {}}
     return $user
 }
+# Record HTTP activity at most once per minute across workers. The database
+# condition also protects callers with a partial or stale user dictionary.
+proc ::web::user::record_visit {store user} {
+    if {$user eq {}} {return}
+    set now [clock seconds]
+    if {[dict exists $user last_seen_at]} {
+        set previous [dict get $user last_seen_at]
+        if {[string is wideinteger -strict $previous] && $now - $previous < 60} {return}
+    }
+    set where [db_and [predicate $store [dict create id [dict get $user id] active 1]] \
+        [db_le [db_col last_seen_at] [db_value [expr {$now - 60}] -type bigint]]]
+    dict get [db_execute [dict get $store -connection] [db_where \
+        [db_values [db_update web_user_users] [typed_values [dict create last_seen_at $now]] -expressions] $where]] rowcount
+}
 # Persistent fixed windows survive process restarts. Count BEFORE the business transaction.
 proc ::web::user::throttle {store subject maximum} {
     set window [property $store throttle_window]

@@ -16,8 +16,10 @@ proc ::web::user::action_login {config row fields} {
         fail 401 "Invalid email or password."
     }
     if {![password_ok $store $user [dict get $fields password]] || ![dict get $user active]} {fail 401 "Invalid email or password."}
-    save_user $store $user {}
     set kind [expr {[dict get $user mfa_secret] eq {} ? "auth" : "two-factor"}]
+    set changes {}
+    if {$kind eq "auth"} {set changes [dict create last_login_at [clock seconds] last_seen_at [clock seconds]]}
+    save_user $store $user $changes
     set staySignedIn [expr {[dict exists $fields stay_signed_in] && [dict get $fields stay_signed_in] eq "1"}]
     dict set result token [rotate $store $row $kind [dict get $user id] {} $staySignedIn]
     dict set result view [expr {$kind eq "auth" ? "account" : "two-factor"}]
@@ -108,14 +110,14 @@ proc ::web::user::action_two_factor {config row fields} {
     set result [dict create message {} debug_code {} delivery {}]
     if {[dict get $row kind] ne "two-factor"} {fail 401 "Sign in with your password first."}
     set user [user_by_id $store $uid]
-    if {$user eq {} || [dict get $user mfa_secret] eq {}} {fail 401 "Sign in again."}
+    if {$user eq {} || ![dict get $user active] || [dict get $user mfa_secret] eq {}} {fail 401 "Sign in again."}
     set secret [unseal $store [dict get $user mfa_secret] [list mfa $uid]]
     set step [totp_step $store $secret [dict get $fields code] [dict get $user last_step]]
     if {$step < 0} {
         return -code error -errorcode {WEB USER 401 TOTP} \
             "That authenticator code is invalid or has already been used. Wait for the next code in your authenticator app, then try again."
     }
-    save_user $store $user [dict create last_step $step]
+    save_user $store $user [dict create last_step $step last_login_at [clock seconds] last_seen_at [clock seconds]]
     dict set result token [rotate $store $row auth $uid {} [session_persistent $row]]
     dict set result view account
     return $result
