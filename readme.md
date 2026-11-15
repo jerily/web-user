@@ -245,3 +245,10 @@ All database operations use `tpersist`. Rerun the explicit `initdb` maintenance
 operation to add these indexes to existing databases. Index creation is
 idempotent and never runs in request handlers. The example-community integration
 suite verifies the access paths with SQLite and PostgreSQL EXPLAIN plans.
+
+## Groups and permissions
+
+Use `sync_access` to apply configured group membership and permission grants,
+then `has_permission` to authorize actions for a verified account. See
+[Groups and permissions](docs/access.md) for INI examples, startup/maintenance
+integration, and revocation behavior.

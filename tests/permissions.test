@@ -1,0 +1,68 @@
+package require tcltest
+package require web-user 0.5.0
+namespace import ::tcltest::*
+namespace eval ::accesstest {}
+proc ::accesstest::setup {} {
+    set ::env(ENV) LOCAL
+    variable db [::web::user::connect {sqlite_path :memory:}]
+    ::web::user::initdb $db
+    variable handles [list [tink::register_keyset [tink::aead::create_keyset AES256_GCM]] [tink::register_keyset [tink::mac::create_keyset HMAC_SHA256]]]
+    variable store [::web::user::create -connection $db -config [dict create tenant access-test \
+        aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt test-salt]]
+}
+proc ::accesstest::member {address {verified 1}} {
+    variable store
+    set uid [ksuid::generate_ksuid]
+    ::web::user::insert $store web_user_users [dict create id $uid active 1 verified $verified \
+        email_key [::web::user::email_key $store $address] email [::web::user::seal $store $address [list email $uid]] \
+        password unused mfa_secret {} last_step -1 revision 0 created_at 1]
+    return $uid
+}
+proc ::accesstest::cleanup {} {
+    ::tpersist::db_disconnect $::accesstest::db
+    foreach handle $::accesstest::handles {tink::unregister_keyset $handle}
+}
+test access-1 {sync before registration, normalized membership, union and verified accounts only} -setup ::accesstest::setup -body {
+    set store $::accesstest::store
+    ::web::user::sync_access $store {admin { Mira@Example.com, rowan@example.com } moderator mira@example.com} \
+        {admin {forum.manage, forum.moderate} moderator forum.moderate}
+    set mira [::accesstest::member mira@example.com]
+    set rowan [::accesstest::member rowan@example.com 0]
+    set other [::accesstest::member other@example.com]
+    list [::web::user::groups $store $mira] [::web::user::permissions $store $mira] \
+        [::web::user::permissions $store $rowan] [::web::user::permissions $store $other] \
+        [::web::user::permissions $store {}]
+} -cleanup ::accesstest::cleanup -result {{admin moderator} {forum.manage forum.moderate} {} {} {}}
+
+test access-2 {repeated sync revokes removed users and permissions without changing sessions} -setup ::accesstest::setup -body {
+    set store $::accesstest::store
+    set uid [::accesstest::member mira@example.com]
+    set token [::web::user::new_session $store auth $uid]
+    foreach n {1 2} {::web::user::sync_access $store {admin mira@example.com} {admin forum.moderate}}
+    set before [::web::user::has_permission $store $uid forum.moderate]
+    ::web::user::sync_access $store {admin {}} {admin forum.moderate}
+    list $before [::web::user::has_permission $store $uid forum.moderate] \
+        [expr {[::web::user::session $store $token] ne {}}] [llength [::web::user::rows $store web_user_group_members]]
+} -cleanup ::accesstest::cleanup -result {1 0 1 0}
+
+test access-3 {validation is atomic and tenants never share memberships} -setup ::accesstest::setup -body {
+    set store $::accesstest::store
+    set uid [::accesstest::member mira@example.com]
+    ::web::user::sync_access $store {admin mira@example.com} {admin forum.moderate}
+    set invalid [catch {::web::user::sync_access $store {admin mira@example.com} {missing forum.moderate}}]
+    set tenant [dict replace $store -tenant other]
+    ::web::user::sync_access $tenant {admin mira@example.com} {admin forum.manage}
+    list $invalid [::web::user::permissions $store $uid] [::web::user::permissions $tenant $uid]
+} -cleanup ::accesstest::cleanup -result {1 forum.moderate {}}
+
+test access-4 {deactivation and email changes revoke grants from current account state} -setup ::accesstest::setup -body {
+    set store $::accesstest::store
+    set uid [::accesstest::member mira@example.com]
+    ::web::user::sync_access $store {admin mira@example.com} {admin forum.moderate}
+    ::web::user::update $store web_user_users [dict create id $uid] {active 0}
+    set inactive [::web::user::permissions $store $uid]
+    ::web::user::update $store web_user_users [dict create id $uid] \
+        [dict create active 1 email_key [::web::user::email_key $store another@example.com]]
+    list $inactive [::web::user::permissions $store $uid]
+} -cleanup ::accesstest::cleanup -result {{} {}}
+cleanupTests

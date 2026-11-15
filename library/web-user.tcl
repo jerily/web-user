@@ -12,9 +12,9 @@ namespace eval ::web::user {
         package require $name $version
     }
     namespace import ::tpersist::db_*
-    foreach module {storage settings validation crypto profiles sessions captcha email registrations maintenance service navigation http widgets mount} {
+    foreach module {storage settings permissions validation crypto profiles sessions captcha email registrations maintenance service navigation http widgets mount} {
         source [file join $root library $module.tcl]
     }
     unset name version module
 }
-package provide web-user 0.4.0
+package provide web-user 0.5.0
