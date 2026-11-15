@@ -51,11 +51,14 @@ proc ::web::user::password_hash {value {config {}}} {
     }
     ::bcrypt::hashpw $value [::bcrypt::gensalt [dict get $config bcrypt_cost]]
 }
-# Check a submitted password against a supported bcrypt hash.
-proc ::web::user::password_ok {user value} {
+# Decrypt the account-bound bcrypt hash only while checking a password. Bare
+# hashes, corrupt ciphertext and values encrypted for another account fail closed.
+proc ::web::user::password_ok {store user value} {
     set bytes [encoding convertto utf-8 $value]
     if {[string length $bytes] < 1 || [string length $bytes] > 72 || [string first \x00 $value] >= 0} {return 0}
-    set hash [dict get $user password]
+    if {[catch {
+        set hash [unseal $store [dict get $user password] [list password-hash [dict get $user id]]]
+    }]} {return 0}
     # Fail closed for unsupported hashes and unreasonable stored costs.
     if {![regexp {^\$2[aby]\$(0[4-9]|1[0-6])\$[./A-Za-z0-9]{53}$} $hash]} {return 0}
     ::bcrypt::checkpw $value $hash

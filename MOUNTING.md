@@ -35,7 +35,7 @@ Set `ENV` to exactly `LOCAL` or `PROD` before loading the host configuration.
 schema explicitly before workers serve requests:
 
 ```tcl
-package require web-user 0.3.0
+package require web-user 0.4.0
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/accounts.sqlite3 \
     postgresql [dict create -host db -database accounts -user accounts]]]
@@ -48,6 +48,11 @@ set router [::tpathexp::router]
 The two handles are registered Tink keysets owned by this worker: AES256_GCM
 for AEAD and HMAC_SHA256 for MAC. Provision keyset JSON once, keep it outside
 source control with restricted permissions, and reuse it across restarts.
+Keep keysets separate from SQL backups. The AEAD key encrypts the bcrypt hash
+in both permanent accounts and pending registrations, bound to the tenant,
+account ID and password purpose. Bare hashes are not accepted: accounts created
+before this storage change need email password recovery after upgrading, and
+old pending registrations should be restarted. There is no password migration.
 Unregister the handles after destroying the worker's router, then disconnect
 its database. A directly supplied connection must use `-autobegin 0`.
 
