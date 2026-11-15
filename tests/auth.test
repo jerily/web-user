@@ -103,7 +103,8 @@ test auth-1 {register verifies email, KSUID id, login rotates and logout revokes
     set uid [dict get $user id]
     set stored [::web::user::user_by_id $::authtest::store $uid]
     set result [list $login [dict get $user email] [regexp {^[A-Za-z0-9]{27}$} $uid] [expr {$old ne $::authtest::cookie}] \
-        [expr {[dict get $stored email] ne "person@example.com"}] [string match {$2b$12$*} [dict get $stored password]]]
+        [expr {[dict get $stored email] ne "person@example.com"}] \
+        [string match {$2b$12$*} [::web::user::unseal $::authtest::store [dict get $stored password] [list password-hash $uid]]]]
     set token [::authtest::token]
     lappend result [::authtest::call POST /user/logout] [expr {[::web::user::session $::authtest::store $token] eq {}}]
     set result
@@ -303,8 +304,10 @@ test auth-10 {form parsing rejects duplicates and invalid UTF-8, accepts Lambda 
 test auth-11 {bcrypt input boundaries and unmodified Tink API} -setup {::authtest::setup} -body {
     set long [string repeat x 72]
     set hash [::web::user::password_hash $long]
-    list [string match {$2b$12$*} $hash] [::web::user::password_ok [dict create password $hash] $long] \
-        [catch {::web::user::password_hash ${long}x}] [::web::user::password_ok [dict create password $hash] ${long}x] \
+    set store $::authtest::store
+    set user [dict create id boundary password [::web::user::seal $store $hash {password-hash boundary}]]
+    list [string match {$2b$12$*} $hash] [::web::user::password_ok $store $user $long] \
+        [catch {::web::user::password_hash ${long}x}] [::web::user::password_ok $store $user ${long}x] \
         [catch {::web::user::password_hash "long password with \x00 inside"}] \
         [info commands ::tink::password::*] [info commands ::tink::random_bytes] \
         [info commands ::tink::constant_time_equal] [package provide tink]
@@ -328,7 +331,7 @@ test auth-13 {configured policy drives password, session, QR provisioning, LOCAL
     set store $::authtest::store
     set row [::web::user::session $store [::authtest::token]]
     set user [::web::user::user_by_id $store [dict get $row uid]]
-    set result [list [string match {$2b$05$*} [dict get $user password]] \
+    set result [list [string match {$2b$05$*} [::web::user::unseal $store [dict get $user password] [list password-hash [dict get $user id]]]] \
         [expr {[dict get $row expires] - [clock seconds] > 110}]]
     lappend result [::authtest::call POST /user/two-factor/setup [dict create operation begin password $::authtest::password]]
     set row [::web::user::session $store [::authtest::token]]
@@ -663,7 +666,7 @@ foreach mode {LOCAL PROD} {
             [expr {[dict get [::authtest::me] id] eq $uid}] \
             [expr {[dict get $before mfa_secret] eq [dict get $after mfa_secret]}] \
             [expr {[dict get $before last_step] == [dict get $after last_step]}] \
-            [::web::user::password_ok $after $next] [::web::user::password_ok $after $::authtest::password] \
+            [::web::user::password_ok $store $after $next] [::web::user::password_ok $store $after $::authtest::password] \
             [lindex $::authtest::delivered 0]
         foreach token [list $old $other $reset] {lappend result [expr {[::web::user::session $store $token] eq {}}]}
         set result

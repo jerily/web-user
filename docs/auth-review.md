@@ -6,7 +6,7 @@ pending session never grants an authenticated identity.
 
 | Concern | Package behavior |
 | --- | --- |
-| Password handling | Preserve password text; require at least 15 characters and at most 72 UTF-8 bytes; reject NUL; use bcrypt at cost 12. |
+| Password handling | Preserve password text; require at least 15 characters and at most 72 UTF-8 bytes; reject NUL; use bcrypt at cost 12, then encrypt the hash with tenant/account/purpose-bound Tink AEAD. Bare hashes are rejected. |
 | Session credentials | Generate 32 random bytes with twebserver; store tenant/purpose-bound Tink MAC digests. |
 | Email confirmation and reset codes | Generate six uniformly random digits with twebserver; store session-bound Tink MAC digests and enforce expiry and attempt limits. |
 | Sensitive account fields | Encrypt email, first/last names and authenticator secrets with Tink AEAD and tenant/user/field-bound associated data. |
@@ -27,6 +27,14 @@ pending session never grants an authenticated identity.
 its QR image. Each enrollment uses a fresh random secret. The package uses
 Tink's existing AEAD and MAC APIs, bcrypt-tcl for passwords, and twebserver for
 random bytes. Persist keys across workers and restarts.
+
+Encrypting the bcrypt hash adds protection when a database or SQL backup is
+exposed without the encryption key. This follows the additional keyed operation
+recommended by [NIST SP 800-63B-4, section 3.1.1.2](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/#passwordver).
+The original password remains unavailable even after decryption. Keep the AEAD
+keyset separate from the database and its backups. Existing unencrypted hashes
+require email password recovery after upgrading; no migration or fallback is
+provided. Restart old pending registrations.
 
 SES delivery is opt-in; hosts configure sender, region, credentials and monitor
 delivery failures. No durable email queue is included. OAuth, phone registration,

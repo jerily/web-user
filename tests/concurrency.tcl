@@ -74,7 +74,8 @@ foreach scenario {email username} {
             set address [expr {$scenario eq "email" ? "same@example.com" : "user$number@example.com"}]
             set username [expr {$scenario eq "username" ? "shared" : "user$number"}]
             ::web::user::insert $store web_user_registrations [dict create id $id email_key [::web::user::email_key $store $address] \
-                email [::web::user::seal $store $address [list email $id]] password $password username $username \
+                email [::web::user::seal $store $address [list email $id]] \
+                password [::web::user::seal $store $password [list password-hash $id]] username $username \
                 first_name {} last_name {} display_name {} created_at [clock seconds] expires [expr {[clock seconds]+900}]]
             dict set fixture token$number [::web::user::new_session $store verify $id 000123]
         }

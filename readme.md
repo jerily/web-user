@@ -10,7 +10,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.3.0
+package require web-user 0.4.0
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
@@ -147,10 +147,22 @@ using the unique `(tenant, email_key)` index. `email_key` is a Tink MAC over the
 configured `email_hash_salt` and normalized address, also bound to tenant and
 purpose. `::web::user::user_by_email $store $address` uses the same lookup and
 returns the stored record (its email remains encrypted). MFA secrets
-are AEAD-encrypted with tenant/user-associated data. Passwords use `bcrypt-tcl` at cost 12 with random salts. Inputs above 72 UTF-8
+are AEAD-encrypted with tenant/user-associated data. Passwords use `bcrypt-tcl`
+at cost 12 with random salts, then the complete bcrypt hash is encrypted with
+Tink AEAD before storage in `web_user_users.password` or
+`web_user_registrations.password`. The associated data binds it to the tenant,
+account ID and `password-hash` purpose. Verification decrypts only the hash and
+checks it with bcrypt; the original password is never stored. Inputs above 72 UTF-8
 bytes or containing NUL characters are rejected rather than truncated. Native
 MAC verification checks session, recovery, CSRF and TOTP codes; `tink-tcl` is
 used without modifications.
+
+Password verification requires this encrypted format. Bare bcrypt hashes are
+rejected, with no migration or compatibility fallback. Existing accounts must use
+email password recovery after upgrading; changing a password before upgrading
+still writes the old format. Pending registrations from before the upgrade must
+be restarted. Keep the AEAD keyset separate from the database and its backups,
+and retain the original keyset when restoring encrypted account records.
 
 All state-changing forms require session-bound CSRF. Cookies are host-only,
 HttpOnly, SameSite=Lax and Path=/, and also Secure with a `__Host-` name in PROD.

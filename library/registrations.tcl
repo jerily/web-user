@@ -73,7 +73,7 @@ proc ::web::user::action_register {config row fields} {
     if {[one $store web_user_users [dict create email_key $emailKey]] eq {}} {
         set uid [::ksuid::generate_ksuid]
         set pending [dict create id $uid email_key $emailKey email [seal $store $address [list email $uid]] \
-            password $hash username $username first_name {} last_name {} display_name {} created_at [clock seconds] \
+            password [seal $store $hash [list password-hash $uid]] username $username first_name {} last_name {} display_name {} created_at [clock seconds] \
             expires [expr {[clock seconds] + [property $store code_ttl]}]]
         dict for {key value} $names {
             dict set pending $key [expr {$value eq {} ? {} : [seal $store $value [list profile $uid $key]]}]

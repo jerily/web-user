@@ -22,7 +22,8 @@ foreach {mode constraint} {LOCAL {} PROD migration_pg} {
         set hash [::web::user::password_hash {a legacy password} {bcrypt_cost 4}]
         foreach {uid verified address} {pending 0 pending@example.com member 1 member@example.com} {
             ::web::user::insert $store web_user_users [dict create id $uid verified $verified email_key [::web::user::email_key $store $address] \
-                email [::web::user::seal $store $address [list email $uid]] password $hash mfa_secret {} last_step -1 revision 0 created_at [clock seconds]]
+                email [::web::user::seal $store $address [list email $uid]] \
+                password [::web::user::seal $store $hash [list password-hash $uid]] mfa_secret {} last_step -1 revision 0 created_at [clock seconds]]
         }
         ::web::user::insert $store web_user_profiles [dict create id pending first_name [::web::user::seal $store Mira {profile pending first_name}] \
             last_name [::web::user::seal $store Fern {profile pending last_name}]]
@@ -30,7 +31,7 @@ foreach {mode constraint} {LOCAL {} PROD migration_pg} {
         ::web::user::initdb $db
         ::web::user::initdb $db
         set result [list [dict get [::web::user::user_by_id $store member] active] [expr {[::web::user::user_by_id $store pending] eq {}}] \
-            [dict get [::web::user::registration $store pending] password]]
+            [::web::user::unseal $store [dict get [::web::user::registration $store pending] password] {password-hash pending}]]
         set result [lreplace $result 2 2 [expr {[lindex $result 2] eq $hash}]]
         ::tpersist::db_transaction $db {
             ::web::user::action_verify [dict create -store $store] [::web::user::session $store $token] {code 000123}
