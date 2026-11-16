@@ -1,7 +1,7 @@
 {
   "name": "web-user",
   "license": "MIT",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "scripts": {},
   "dependencies": {
     "tcl": ">=9.1.0,<10.0.0",
@@ -21,8 +21,8 @@
     "topenapi": "^0.2.0",
     "tsession-sqlite": "^1.0.2",
     "tsession-postgres": "^1.0.2",
-    "aws-sdk-tcl-ses": "^1.0.16",
-    "aws-sdk-tcl-sqs": "^1.0.19",
+    "pure-tcl-aws-ses": "^0.1.0",
+    "pure-tcl-aws-sqs": "^0.1.0",
     "tcaptcha": "^0.1.0"
   },
   "devDependencies": {}
