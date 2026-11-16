@@ -115,8 +115,12 @@ never invokes SES. Disabled email sends nothing; PROD registration/recovery
 therefore needs email enabled or an explicitly configured transport.
 
 To queue mail instead, set mount properties `email_queue_enabled true` and
-`email_queue_name` to an existing standard SQS queue in `email_region`. This
-requires `aws-sdk-tcl-sqs` (`awssqs` 1.0.19+). The optional
+`email_queue_url` to the HTTPS URL of an existing standard SQS queue in
+`email_region`, for example
+`https://sqs.eu-central-1.amazonaws.com/123456789012/user-emails`.
+Use the queue URL, not its name or ARN. This replaces `email_queue_name` and
+avoids a queue URL lookup on every send. It requires `aws-sdk-tcl-sqs`
+(`awssqs` 1.0.19+). The optional
 `email_queue_callback` command prefix receives the queue URL after SQS accepts
 each message, allowing the host to wake its worker. Callback failures leave the
 message queued; the host should schedule recovery independently. LOCAL never
