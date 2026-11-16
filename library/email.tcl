@@ -26,9 +26,9 @@ proc ::web::user::validate_email_config {config} {
         error "email_region must be an AWS region when PROD email is enabled"
     }
     if {[dict exists $settings email_queue_enabled] && [dict get $settings email_queue_enabled]} {
-        if {![dict exists $settings email_queue_name] ||
-            ![regexp {^[A-Za-z0-9_-]{1,80}$} [dict get $settings email_queue_name]]} {
-            error "email_queue_name must name a standard SQS queue"
+        if {![dict exists $settings email_queue_url] ||
+            ![regexp {^https://[A-Za-z0-9.-]+/[0-9]{12}/[A-Za-z0-9_-]{1,80}$} [dict get $settings email_queue_url]]} {
+            error "email_queue_url must be the HTTPS URL of a standard SQS queue, not its name or ARN"
         }
         package require awssqs 1.0.19
     } else {
@@ -103,7 +103,7 @@ proc ::web::user::deliver {config purpose destination code} {
             expires_at [list N $expires] message [list M $fields]]]]
         set client [::aws::sqs::create [dict create region [dict get $settings email_region]]]
         try {
-            set queue [$client get_queue_url [dict get $settings email_queue_name]]
+            set queue [dict get $settings email_queue_url]
             $client send_message $queue $body
         } finally {$client destroy}
         # The command prefix runs only after SQS accepts the message. It receives
