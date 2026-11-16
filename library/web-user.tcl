@@ -1,8 +1,8 @@
-#
+# 
 # Copyright Jerily LTD. All Rights Reserved.
 # SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
 # SPDX-License-Identifier: MIT.
-#
+# 
 
 # Load the account package and its storage dependencies.
 package require Tcl 9.1
@@ -17,4 +17,4 @@ namespace eval ::web::user {
     }
     unset name version module
 }
-package provide web-user 0.5.1
+package provide web-user 0.5.2

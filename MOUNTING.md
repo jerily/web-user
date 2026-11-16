@@ -316,7 +316,7 @@ unprefixed subjects. The store's `tenant` remains the account-data identifier.
 
 Mount settings `email_enabled` (false by default), `email_from` (sender address)
 and `email_region` (AWS region) control SES delivery. With `email_enabled true`
-in PROD, sender and region are required and `awsses` 1.0.16 is loaded. Credentials
+in PROD, sender and region are required and `pure-tcl-aws-ses` 0.1.0 is loaded. Credentials
 come from the AWS SDK provider chain. Configure SES sender authorization in the
 chosen region. LOCAL never invokes SES.
 

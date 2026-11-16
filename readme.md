@@ -108,7 +108,7 @@ challenges return to their starting form, and rate limits show a reload link.
 Successful sign-in still follows a validated `return_to` destination.
 
 Email is opt-in: set mount properties `email_enabled true`, `email_from`, and
-`email_region`. In PROD, `aws-sdk-tcl-ses` (`awsses` 1.0.16+) sends verification
+`email_region`. In PROD, `pure-tcl-aws-ses` 0.1.0+ sends verification
 and recovery codes, MFA enabled/disabled notices, and password-change notices
 for both changes and resets. It uses the AWS credential provider chain. LOCAL
 never invokes SES. Disabled email sends nothing; PROD registration/recovery
@@ -119,8 +119,7 @@ To queue mail instead, set mount properties `email_queue_enabled true` and
 `email_region`, for example
 `https://sqs.eu-central-1.amazonaws.com/123456789012/user-emails`.
 Use the queue URL, not its name or ARN. This replaces `email_queue_name` and
-avoids a queue URL lookup on every send. It requires `aws-sdk-tcl-sqs`
-(`awssqs` 1.0.19+). The optional
+avoids a queue URL lookup on every send. It requires `pure-tcl-aws-sqs` 0.1.0+. The optional
 `email_queue_callback` command prefix receives the queue URL after SQS accepts
 each message, allowing the host to wake its worker. Callback failures leave the
 message queued; the host should schedule recovery independently. LOCAL never
@@ -129,7 +128,7 @@ contacts SQS. An explicit `deliver` transport still takes precedence.
 Queue bodies are JSON objects with `version: 1`, `expires_at` (Unix seconds,
 zero for security notices), and `message` (the SES `from`, `to` array, `subject`,
 and `text` fields). The consumer should discard expired codes, pass `message`
-to `awsses send_email`, and delete from SQS only after success. Messages include
+to the SES client’s `send_email` method, and delete from SQS only after success. Messages include
 recipient addresses and codes: restrict access and avoid logging their bodies.
 
 The mount's `issuer` is the public site name used in authenticator apps and as

@@ -1,13 +1,13 @@
-#
+# 
 # Copyright Jerily LTD. All Rights Reserved.
 # SPDX-FileCopyrightText: 2026 Neofytos Dimitriou (neo@jerily.cy)
 # SPDX-License-Identifier: MIT.
-#
+# 
 
 package require tcltest
 package require web-user
-package require awsses 1.0.16
-package require awssqs 1.0.19
+package require pure-tcl-aws-ses 0.1.0
+package require pure-tcl-aws-sqs 0.1.0
 namespace import ::tcltest::*
 namespace eval ::mailtest {}
 # Provide the setup test fixture.
