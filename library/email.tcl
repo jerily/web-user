@@ -4,11 +4,15 @@
 # SPDX-License-Identifier: MIT.
 #
 
-# SES is opt-in and runs after the account transaction commits. Credentials
+# Email is opt-in and runs after the account transaction commits. Credentials
 # come from the AWS provider chain, never from account/site form fields.
 proc ::web::user::validate_email_config {config} {
     set settings [dict get $config -config]
     if {![string is boolean -strict [dict get $settings email_enabled]]} {error "email_enabled must be a boolean"}
+    if {[dict exists $settings email_queue_enabled] &&
+        ![string is boolean -strict [dict get $settings email_queue_enabled]]} {
+        error "email_queue_enabled must be a boolean"
+    }
     set store [dict get $config -store]
     if {[dict get $store -env] eq "PROD" && [property $store email_verification_required] &&
         (![dict get $settings email_enabled] || ![property $store verification_emails_enabled])} {
@@ -21,7 +25,15 @@ proc ::web::user::validate_email_config {config} {
     if {![regexp {^[a-z][a-z0-9-]+-[0-9]+$} [dict get $settings email_region]]} {
         error "email_region must be an AWS region when PROD email is enabled"
     }
-    package require awsses 1.0.16
+    if {[dict exists $settings email_queue_enabled] && [dict get $settings email_queue_enabled]} {
+        if {![dict exists $settings email_queue_name] ||
+            ![regexp {^[A-Za-z0-9_-]{1,80}$} [dict get $settings email_queue_name]]} {
+            error "email_queue_name must name a standard SQS queue"
+        }
+        package require awssqs 1.0.19
+    } else {
+        package require awsses 1.0.16
+    }
 }
 
 # Build a credential-free account security notification.
@@ -68,7 +80,7 @@ proc ::web::user::email_message {config purpose destination code} {
     return [dict create from [dict get $settings email_from] to [list $destination] subject $subject text $text]
 }
 
-# Send enabled account messages using the host transport or SES.
+# Send enabled account messages using the host transport, SQS, or SES.
 proc ::web::user::deliver {config purpose destination code} {
     if {![dict get $config -config email_enabled]} {return}
     if {$purpose eq "verify" && ![property [dict get $config -store] verification_emails_enabled]} {return}
@@ -78,6 +90,29 @@ proc ::web::user::deliver {config purpose destination code} {
     }
     if {[dict get $config -store -env] ne "PROD"} {return}
     set message [email_message $config $purpose $destination $code]
+    set settings [dict get $config -config]
+    if {[dict exists $settings email_queue_enabled] && [dict get $settings email_queue_enabled]} {
+        set fields {}
+        foreach key {from subject text} {dict set fields $key [list S [dict get $message $key]]}
+        dict set fields to [list L [lmap address [dict get $message to] {list S $address}]]
+        set expires 0
+        if {$purpose in {verify reset}} {
+            set expires [expr {[clock seconds] + [property [dict get $config -store] code_ttl]}]
+        }
+        set body [::tjson::typed_to_json [list M [dict create version {N 1} \
+            expires_at [list N $expires] message [list M $fields]]]]
+        set client [::aws::sqs::create [dict create region [dict get $settings email_region]]]
+        try {
+            set queue [$client get_queue_url [dict get $settings email_queue_name]]
+            $client send_message $queue $body
+        } finally {$client destroy}
+        # The command prefix runs only after SQS accepts the message. It receives
+        # the queue URL, never the address or code; failures leave the mail queued.
+        if {[dict exists $settings email_queue_callback] && [dict get $settings email_queue_callback] ne {}} {
+            {*}[dict get $settings email_queue_callback] $queue
+        }
+        return
+    }
     set client [::aws::ses::create [dict create region [dict get $config -config email_region]]]
     try {$client send_email $message} finally {$client destroy}
 }

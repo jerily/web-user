@@ -7,6 +7,7 @@
 package require tcltest
 package require web-user
 package require awsses 1.0.16
+package require awssqs 1.0.19
 namespace import ::tcltest::*
 namespace eval ::mailtest {}
 # Provide the setup test fixture.
@@ -33,6 +34,35 @@ proc ::mailtest::client {method args} {
 proc ::mailtest::cleanup {} {
     rename ::aws::ses::create {}
     rename ::mailtest::real_create ::aws::ses::create
+}
+
+proc ::mailtest::queue_setup {} {
+    setup
+    variable fail_method {}
+    variable config
+    dict set config -config email_queue_enabled true
+    dict set config -config email_queue_name user-emails
+    dict set config -config email_queue_callback ::mailtest::queued
+    rename ::aws::sqs::create ::mailtest::real_sqs_create
+    proc ::aws::sqs::create {options} {
+        lappend ::mailtest::calls [list sqs-create $options]
+        return ::mailtest::sqs
+    }
+}
+proc ::mailtest::sqs {method args} {
+    lappend ::mailtest::calls [list $method {*}$args]
+    if {$method eq $::mailtest::fail_method} {error "injected queue failure"}
+    if {$method eq "get_queue_url"} {return https://sqs.test/user-emails}
+    return 1
+}
+proc ::mailtest::queued {url} {
+    lappend ::mailtest::calls [list callback $url]
+    if {$::mailtest::fail_method eq "callback"} {error "injected callback failure"}
+}
+proc ::mailtest::queue_cleanup {} {
+    rename ::aws::sqs::create {}
+    rename ::mailtest::real_sqs_create ::aws::sqs::create
+    cleanup
 }
 
 test email-1 {SES receives the configured region, sender, recipient and expiring code; client is released} -setup {
@@ -101,4 +131,71 @@ test email-6 {disabling verification messages preserves recovery and security no
     foreach purpose {verify reset password-changed} {::web::user::deliver $config $purpose person@example.com 123456}
     lmap call $::mailtest::calls {lindex $call 0}
 } -cleanup {::mailtest::cleanup} -result {reset password-changed}
+test email-queue-1 {queue receives the SES message and expiry before callback, without calling SES} -setup {
+    ::mailtest::queue_setup
+} -body {
+    ::web::user::validate_email_config $::mailtest::config
+    ::web::user::deliver $::mailtest::config reset person@example.com 012345
+    set body [::tjson::json_to_simple [lindex $::mailtest::calls 2 2]]
+    list [lmap call $::mailtest::calls {lindex $call 0}] \
+        [dict get $body version] [dict get $body message to] \
+        [string match {*012345*} [dict get $body message text]] \
+        [expr {abs([dict get $body expires_at] - [clock seconds] - 900) <= 1}] \
+        [lindex $::mailtest::calls end]
+} -cleanup {::mailtest::queue_cleanup} \
+    -result {{sqs-create get_queue_url send_message destroy callback} 1 person@example.com 1 1 {callback https://sqs.test/user-emails}}
+
+test email-queue-2 {lookup/enqueue failures destroy client without invoking callback or falling back to SES} -setup {
+    ::mailtest::queue_setup
+} -body {
+    set result {}
+    foreach method {get_queue_url send_message callback} {
+        set ::mailtest::calls {}
+        set ::mailtest::fail_method $method
+        lappend result [catch {::web::user::deliver $::mailtest::config reset person@example.com 123456}] \
+            [lmap call $::mailtest::calls {lindex $call 0}]
+    }
+    set result
+} -cleanup {::mailtest::queue_cleanup} \
+    -result {1 {sqs-create get_queue_url destroy} 1 {sqs-create get_queue_url send_message destroy} 1 {sqs-create get_queue_url send_message destroy callback}}
+
+test email-queue-3 {LOCAL, disabled mail, and disabled verification never enqueue} -setup {
+    ::mailtest::queue_setup
+} -body {
+    foreach path {{-store -env} {-config email_enabled} {-store -config verification_emails_enabled}} value {LOCAL false false} {
+        set config $::mailtest::config
+        dict set config {*}$path $value
+        ::web::user::deliver $config verify person@example.com 123456
+    }
+    set ::mailtest::calls
+} -cleanup {::mailtest::queue_cleanup} -result {}
+
+test email-queue-4 {queue config requires a boolean and an existing standard queue name} -setup {
+    ::mailtest::queue_setup
+} -body {
+    set result {}
+    foreach {key value} {email_queue_enabled maybe email_queue_name {} email_queue_name invalid.fifo email_queue_name {invalid name}} {
+        set config $::mailtest::config
+        dict set config -config $key $value
+        lappend result [catch {::web::user::validate_email_config $config}]
+    }
+    set result
+} -cleanup {::mailtest::queue_cleanup} -result {1 1 1 1}
+
+test email-queue-5 {notifications have no code expiry and the callback is optional} -setup {
+    ::mailtest::queue_setup
+} -body {
+    dict unset ::mailtest::config -config email_queue_callback
+    ::web::user::deliver $::mailtest::config password-changed person@example.com {}
+    set body [::tjson::json_to_simple [lindex $::mailtest::calls 2 2]]
+    list [dict get $body expires_at] [lindex $::mailtest::calls end]
+} -cleanup {::mailtest::queue_cleanup} -result {0 destroy}
+
+test email-queue-6 {explicit transport still takes precedence over queueing} -setup {
+    ::mailtest::queue_setup
+} -body {
+    dict set ::mailtest::config -deliver ::mailtest::client
+    ::web::user::deliver $::mailtest::config reset person@example.com 123456
+    set ::mailtest::calls
+} -cleanup {::mailtest::queue_cleanup} -result {{reset person@example.com 123456}}
 cleanupTests

@@ -114,6 +114,20 @@ for both changes and resets. It uses the AWS credential provider chain. LOCAL
 never invokes SES. Disabled email sends nothing; PROD registration/recovery
 therefore needs email enabled or an explicitly configured transport.
 
+To queue mail instead, set mount properties `email_queue_enabled true` and
+`email_queue_name` to an existing standard SQS queue in `email_region`. This
+requires `aws-sdk-tcl-sqs` (`awssqs` 1.0.19+). The optional
+`email_queue_callback` command prefix receives the queue URL after SQS accepts
+each message, allowing the host to wake its worker. Callback failures leave the
+message queued; the host should schedule recovery independently. LOCAL never
+contacts SQS. An explicit `deliver` transport still takes precedence.
+
+Queue bodies are JSON objects with `version: 1`, `expires_at` (Unix seconds,
+zero for security notices), and `message` (the SES `from`, `to` array, `subject`,
+and `text` fields). The consumer should discard expired codes, pass `message`
+to `awsses send_email`, and delete from SQS only after success. Messages include
+recipient addresses and codes: restrict access and avoid logging their bodies.
+
 The mount's `issuer` is the public site name used in authenticator apps and as
 an email subject prefix. For example, `issuer ttrek.sh` with `title {Your account}`
 produces `ttrek.sh: Confirm your email for Your account`. An empty issuer leaves
@@ -125,9 +139,9 @@ code`; it also requires `email_enabled true` and may run in LOCAL. Purposes are
 `verify`, `reset`, `password-changed`, `mfa-enabled`, and `mfa-disabled`. Notices
 have an empty code and contain no password or MFA secret. Delivery happens after
 commit. A failure logs a generic error while preserving the committed result
-and replacement cookie; it does not expose account existence. There is no
-persistent delivery queue or application retry worker. SES uses the SDK's retry
-policy; operators must monitor delivery failures. Recovery codes must be entered
+and replacement cookie; it does not expose account existence. Direct SES uses
+the SDK's retry policy; queued delivery needs a host-provided consumer and retry
+schedule. Operators must monitor delivery failures. Recovery codes must be entered
 in the requesting browser and are never put in URLs or logs.
 
 Only exact `ENV=LOCAL` displays current development codes in returned forms.
