@@ -8,7 +8,7 @@
 proc ::web::user::mount {router args} {
     variable root
     set config [options {-store {} -config {}} {*}$args]
-    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} master_template {} templates {} title Account issuer {} origin {} properties {}} {*}[dict get $config -config]]
+    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_name {} email_queue_callback {} master_template {} templates {} title Account issuer {} origin {} properties {}} {*}[dict get $config -config]]
     foreach key {prefix deliver} {
         dict set config -$key [dict get $settings $key]
     }
