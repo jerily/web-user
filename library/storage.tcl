@@ -44,7 +44,7 @@ proc ::web::user::initdb {connection} {
 proc ::web::user::create {args} {
     set config [options {-connection {} -config {}} {*}$args]
     set settings [settings [dict get $config -config]]
-    if {[dict get $settings registration_captcha] || [dict get $settings login_captcha_after] > 0} {package require tcaptcha 0.1.0}
+    if {[dict get $settings registration_captcha] || [dict get $settings login_captcha_after] > 0} {package require tcaptcha 1.0.0}
     foreach key {tenant aead mac} {
         dict set config -$key [dict get $settings $key]
     }
