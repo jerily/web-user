@@ -5,4 +5,4 @@
 # 
 
 # Register the package and load its dependencies.
-package ifneeded web-user 0.5.3 [list source [file join $dir library web-user.tcl]]
+package ifneeded web-user 0.5.4 [list source [file join $dir library web-user.tcl]]
