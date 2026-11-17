@@ -108,7 +108,7 @@ challenges return to their starting form, and rate limits show a reload link.
 Successful sign-in still follows a validated `return_to` destination.
 
 Email is opt-in: set mount properties `email_enabled true`, `email_from`, and
-`email_region`. In PROD, `pure-tcl-aws-ses` 0.1.0+ sends verification
+`email_region`. In PROD, `pure-tcl-aws-ses` 1.0.0+ sends verification
 and recovery codes, MFA enabled/disabled notices, and password-change notices
 for both changes and resets. It uses the AWS credential provider chain. LOCAL
 never invokes SES. Disabled email sends nothing; PROD registration/recovery
@@ -119,7 +119,7 @@ To queue mail instead, set mount properties `email_queue_enabled true` and
 `email_region`, for example
 `https://sqs.eu-central-1.amazonaws.com/123456789012/user-emails`.
 Use the queue URL, not its name or ARN. This replaces `email_queue_name` and
-avoids a queue URL lookup on every send. It requires `pure-tcl-aws-sqs` 0.1.0+. The optional
+avoids a queue URL lookup on every send. It requires `pure-tcl-aws-sqs` 1.0.0+. The optional
 `email_queue_callback` command prefix receives the queue URL after SQS accepts
 each message, allowing the host to wake its worker. Callback failures leave the
 message queued; the host should schedule recovery independently. LOCAL never

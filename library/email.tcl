@@ -30,9 +30,9 @@ proc ::web::user::validate_email_config {config} {
             ![regexp {^https://[A-Za-z0-9.-]+/[0-9]{12}/[A-Za-z0-9_-]{1,80}$} [dict get $settings email_queue_url]]} {
             error "email_queue_url must be the HTTPS URL of a standard SQS queue, not its name or ARN"
         }
-        package require pure-tcl-aws-sqs 0.1.0
+        package require pure-tcl-aws-sqs 1.0.0
     } else {
-        package require pure-tcl-aws-ses 0.1.0
+        package require pure-tcl-aws-ses 1.0.0
     }
 }
 

@@ -6,8 +6,8 @@
 
 package require tcltest
 package require web-user
-package require pure-tcl-aws-ses 0.1.0
-package require pure-tcl-aws-sqs 0.1.0
+package require pure-tcl-aws-ses 1.0.0
+package require pure-tcl-aws-sqs 1.0.0
 namespace import ::tcltest::*
 namespace eval ::mailtest {}
 # Provide the setup test fixture.
