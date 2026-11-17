@@ -8,7 +8,7 @@
 proc ::web::user::mount {router args} {
     variable root
     set config [options {-store {} -config {}} {*}$args]
-    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} master_template {} templates {} title Account issuer {} origin {} properties {}} {*}[dict get $config -config]]
+    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} master_template {} templates {} title Account issuer {} origin {} properties {} assets_url {}} {*}[dict get $config -config]]
     foreach key {prefix deliver} {
         dict set config -$key [dict get $settings $key]
     }
@@ -21,6 +21,8 @@ proc ::web::user::mount {router args} {
     set prefix [string trimright [dict get $config -prefix] /]
     if {![regexp {^(/[A-Za-z0-9_-]+)+$} $prefix]} {error "mount prefix must be a non-root local path"}
     dict set config -prefix $prefix
+    if {[dict get $settings assets_url] eq {}} {dict set settings assets_url $prefix/_assets}
+    dict set settings assets_url [string trimright [dict get $settings assets_url] /]
     dict set config -config $settings
     # Validate the label directly. Provisioning happens only with a user's
     # generated secret and account address during enrollment.

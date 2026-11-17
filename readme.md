@@ -37,6 +37,12 @@ Sessions use `tsession-sqlite` in LOCAL and `tsession-postgres` in PROD. Schema 
 Requires Tcl 9.1 or newer. Dependency minimums include tpersist 0.1.2,
 Jinja 0.1.1, tjson 1.0.27, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.56.
 
+Mount configuration accepts `assets_url` to supply the browser-asset base URL,
+for example `https://cdn.example/cdn/user/_assets`.
+Templates receive this value as `assets`; the default is the mount prefix plus
+`/_assets`, and local asset routes remain available. The host is responsible for
+uploading these files and allowing the CDN in its content security policy.
+
 ## Names and shared widgets
 
 Set `collect_names true` in the account config to collect first and last names;

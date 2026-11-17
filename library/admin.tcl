@@ -112,7 +112,8 @@ proc ::web::user::admin_users {config request context params} {
         set page [admin_user_rows $store [dict get $query page] $sort]
         set prefix [dict get $config -prefix]
         set fields [text_fields [dict create title {Manage users} brand [dict get $config -config title] \
-            prefix $prefix page [dict get $page page] pages [dict get $page pages] total [dict get $page total] \
+            prefix $prefix assets [dict get $config -config assets_url] \
+            page [dict get $page page] pages [dict get $page pages] total [dict get $page total] \
             sort $sort previous_url {} next_url {}]]
         if {[dict get $page page] > 1} {dict set fields previous_url [list S $prefix/admin/users?sort=$sort&page=[expr {[dict get $page page] - 1}]]}
         if {[dict get $page page] < [dict get $page pages]} {dict set fields next_url [list S $prefix/admin/users?sort=$sort&page=[expr {[dict get $page page] + 1}]]}
