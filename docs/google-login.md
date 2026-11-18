@@ -37,7 +37,10 @@ All workers must share these keys and the database.
 New identities may register with a verified Google email. Their password field
 is empty, which explicitly means password login is disabled. Existing accounts
 are **never automatically linked by email**. Sign into the existing account and
-use “Link Google account” with the current password. Linking is CSRF protected,
+choose “Link Google account” on the account page. This opens the authenticated
+`GET /google/link` page, where the current password is confirmed before posting
+to `/google/start` with `intent=link`. The account overview has no linking form.
+Linking is CSRF protected,
 bound to that session and account revision, and permits one Google identity per
 account. A changed email claim never changes an existing account's address.
 Profile names are copied only when enabled by site policy; a public username can

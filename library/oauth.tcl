@@ -162,6 +162,10 @@ proc ::web::user::google_complete {config row identity intent uid} {
     google_mark_session $store $token [clock seconds]
     return $token
 }
+# Keep password confirmation on its own authenticated page.
+proc ::web::user::google_link {config request context params} {
+    handle $config google/link {} 0 $request $context
+}
 proc ::web::user::google_start {config request context params} {
     set store [dict get $config -store]
     set token [cookie_token $config $request]

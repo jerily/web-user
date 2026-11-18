@@ -258,6 +258,7 @@ cryptographic randomness; there is no shared secret or development key in code.
 | `/forgot` | GET/HEAD, POST | Recovery form / issue reset code |
 | `/change-password` | GET/HEAD, POST | Current password plus new password and confirmation; revoke old sessions, preserve MFA |
 | `/close-account` | GET/HEAD, POST | Confirm current password, permanently delete account/profile and pending registrations, revoke all sessions |
+| `/google/link` | GET/HEAD | Authenticated Google-linking page with current-password confirmation; available when Google Login is enabled |
 | `/reset` | GET/HEAD, POST | Reset form / consume code and replace password |
 | `/two-factor` | GET/HEAD, POST | Pending-login OTP challenge |
 | `/two-factor/setup` | GET/HEAD, POST | Setup page; `operation=begin` or `confirm` |
