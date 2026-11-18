@@ -68,8 +68,14 @@ proc ::web::user::prune_registrations {store {batch 500}} {prune_table $store we
 # Remove elapsed rate-limit and failed-login counting buckets.
 proc ::web::user::prune_limits {store {batch 500}} {prune_table $store web_user_limits $batch}
 
+# Bound OAuth cleanup for every mount of this tenant, including disabled Google.
+proc ::web::user::prune_oauth {store {batch 500}} {
+    dict set store -tenant [list web-user-google [dict get $store -tenant]]
+    prune_table $store oauth2_records $batch
+}
+
 # Run one bounded maintenance pass and report counts for a host-owned scheduler.
 proc ::web::user::prune {store {batch 500}} {
     dict create registrations [prune_registrations $store $batch] \
-        sessions [prune_sessions $store $batch] limits [prune_limits $store $batch]
+        sessions [prune_sessions $store $batch] limits [prune_limits $store $batch] oauth [prune_oauth $store $batch]
 }

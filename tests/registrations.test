@@ -185,7 +185,7 @@ foreach {mode constraint} {LOCAL {} PROD postgres} {
         }
         lappend result [::web::user::prune $store] [::web::user::prune $store]
         set result
-    } -cleanup {::authtest::cleanup} -result {3600 {registrations 0 sessions 0 limits 0} {} 400 1 1 1 {registrations 1 sessions 1 limits 1} {registrations 0 sessions 0 limits 0}}
+    } -cleanup {::authtest::cleanup} -result {3600 {registrations 0 sessions 0 limits 0 oauth 0} {} 400 1 1 1 {registrations 1 sessions 1 limits 1 oauth 0} {registrations 0 sessions 0 limits 0 oauth 0}}
 }
 
 test registrations-cleanup-grace-config {grace accepts zero and rejects negative or excessive retention} -body {

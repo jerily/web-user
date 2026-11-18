@@ -10,12 +10,12 @@ The lifecycle is:
 1. The host loads packages and validates site properties.
 2. An explicit initializer opens a connection and runs package `initdb` procedures.
    Content packages may also import/synchronize their source directories here.
-3. Each worker opens its own connection, registers crypto keys, and creates stores.
+3. Each worker opens its connection and passes account keys through `-secret_config`.
 4. The host mounts packages before any catch-all route, then registers host routes.
 5. The HTTP adapter maps `httpMethod` to `method`, preserving body, headers,
    path, `isBase64Encoded` and trusted context. It calls `$router dispatch $request
    $context`, then sends the returned response dictionary.
-6. On shutdown the host closes its connection and unregisters crypto handles.
+6. On shutdown remove routes, call `::web::user::release $mount`, then close the connection.
 
 Handlers receive `request context params` and return `statusCode headers body`.
 `tpathexp` handles path/method matching, 404/405 and HEAD body suppression.
@@ -455,3 +455,16 @@ The Account page shows **Manage users** only to authorized accounts. It lists
 registered accounts, registration/sign-in/visit times, MFA state and configured
 groups, with three sort options and 50 users per page. See [user administration](docs/admin.md) for permissions,
 privacy, templates and schema initialization.
+
+## Private account configuration
+
+`mount` accepts `-connection db -policy publicPolicy` with
+`-secret_config {aead_keyset ... mac_keyset ... email_hash_salt ... google_client_secret ...}`
+separately from public
+`-config` and template properties. Enable Google through `google_enabled`,
+`google_client_id` and `google_redirect_uri` in `-config`. See
+[Google Login](docs/google-login.md) for initialization, routes, ownership and
+account security behavior. Mount owns the handles it registers and `release`
+unregisters them. The lower-level `create` / `-store` API borrows already registered
+handles; it cannot accept these private keyset values at mount. Treat the returned
+mount dictionary and store as private.

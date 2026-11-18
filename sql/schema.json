@@ -324,6 +324,42 @@
         "group_name",
         "permission"
       ]
+    },
+    {
+      "name": "web_user_identities",
+      "columns": {
+        "tenant": {
+          "type": "text",
+          "not_null": true
+        },
+        "id": {
+          "type": "text",
+          "not_null": true
+        },
+        "uid": {
+          "type": "text",
+          "not_null": true
+        },
+        "provider": {
+          "type": "text",
+          "not_null": true
+        },
+        "created_at": {
+          "type": "bigint",
+          "not_null": true
+        }
+      },
+      "primary_key": [
+        "tenant",
+        "id"
+      ],
+      "unique": [
+        [
+          "tenant",
+          "uid",
+          "provider"
+        ]
+      ]
     }
   ]
 }

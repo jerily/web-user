@@ -2,30 +2,32 @@
 
 Licensed under the [MIT License](LICENSE).
 
-Email/password accounts mounted on a `tpathexp` site router. OAuth is outside this
-package. Uses `tpersist`/TDBC, `tink-tcl`, `tmfa`, `tqrcodegen`, `ksuid-tcl`,
+Email/password accounts and optional Google Login mounted on a `tpathexp` site router.
+See [Google Login](docs/google-login.md) for private configuration, explicit linking
+and passwordless account management. Uses `tpersist`/TDBC, `tink-tcl`, `tmfa`, `tqrcodegen`, `ksuid-tcl`,
 `jinja2-tcl`, `tjson`, `bcrypt-tcl`, and `twebserver`. The package owns its routes, templates, account records,
 sessions and CSRF; the host owns configuration, connections, crypto keysets and
 HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contract
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.5.0
+package require web-user 0.6.0
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \
     postgresql [dict create -host db -database community -user community]]]
 ::web::user::initdb $connection ;# explicit maintenance; before workers start
-set store [::web::user::create -connection $connection -config [dict create tenant example \
-    aead $aeadHandle mac $macHandle email_hash_salt $emailHashSalt]]
 set router [::tpathexp::router]
-set accounts [::web::user::mount $router -store $store -config [dict create prefix /user origin https://community.example issuer Community \
+set accounts [::web::user::mount $router -connection $connection -policy {tenant example} \
+    -secret_config [dict create aead_keyset $aeadKeyset mac_keyset $macKeyset email_hash_salt $emailHashSalt] \
+    -config [dict create prefix /user origin https://community.example issuer Community \
         title Account master_template $siteMaster]]
 ```
 
-`aeadHandle` is a registered Tink AES256_GCM keyset; `macHandle` is a registered
-HMAC_SHA256 keyset. Store keyset JSON securely outside the database/repository and
-reuse it across workers and restarts. Each worker registers its own handles.
+`aeadKeyset` is Tink AES256_GCM keyset JSON; `macKeyset` is HMAC_SHA256
+keyset JSON. Both belong in `-secret_config`, together with `email_hash_salt`. Store keyset JSON securely outside the database/repository and
+reuse it across workers and restarts. The mount registers its own handles; call `::web::user::release $accounts` after
+removing its routes and before closing the connection.
 `emailHashSalt` is the required `email_hash_salt` config property. Generate it once
 per site (for example, `openssl rand -hex 32`), keep it in private configuration,
 and reuse it across workers and restarts. There is no default salt.
@@ -35,7 +37,7 @@ directly. A borrowed connection must match the environment; a mismatched dialect
 Sessions use `tsession-sqlite` in LOCAL and `tsession-postgres` in PROD. Schema changes never happen in `mount` or request handlers.
 
 Requires Tcl 9.1 or newer. Dependency minimums include tpersist 0.1.2,
-Jinja 0.1.1, tjson 1.0.27, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.56.
+Jinja 0.1.1, tjson 1.0.28, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.56.
 
 Mount configuration accepts `assets_url` to supply the browser-asset base URL,
 for example `https://cdn.example/cdn/user/_assets`.

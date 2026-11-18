@@ -34,7 +34,7 @@ proc ::web::user::action_forgot {config row fields} {
     set user [user_by_email $store $address]
     set code [verification_code]
     set uid {}
-    if {$user ne {} && [dict get $user active]} {
+    if {$user ne {} && [dict get $user active] && [has_password $user]} {
         set uid [dict get $user id]
         dict set result delivery [list reset $address $code]
         dict set result debug_code $code
@@ -52,7 +52,7 @@ proc ::web::user::action_reset {config row fields} {
     set result [dict create message {} debug_code {} delivery {}]
     check_code $store $row reset [dict get $fields code]
     set user [user_by_id $store $uid]
-    if {$user eq {}} {fail 400 "Invalid or expired code."}
+    if {$user eq {} || ![has_password $user]} {fail 400 "Invalid or expired code."}
     set hash [password_hash [dict get $fields password] [dict get $store -config]]
     save_user $store $user [dict create password [seal $store $hash [list password-hash $uid]] verified 1]
     # Reset does not remove MFA and never signs the browser in automatically.
@@ -68,7 +68,7 @@ proc ::web::user::action_reset {config row fields} {
 proc ::web::user::action_change_password {config row fields} {
     set store [dict get $config -store]
     set user [require_user $store $row]
-    if {![password_ok $store $user [dict get $fields current_password]]} {fail 401 "Invalid current password."}
+    confirm_credentials $store $row $user [field_or_empty $fields current_password]
     if {[dict get $fields password] ne [dict get $fields confirm_password]} {fail 400 "New passwords do not match."}
     set hash [password_hash [dict get $fields password] [dict get $store -config]]
     set uid [dict get $user id]
@@ -85,7 +85,7 @@ proc ::web::user::action_change_password {config row fields} {
 proc ::web::user::action_close_account {config row fields} {
     set store [dict get $config -store]
     set user [require_user $store $row]
-    if {![password_ok $store $user [dict get $fields current_password]]} {fail 401 "Invalid current password."}
+    confirm_credentials $store $row $user [field_or_empty $fields current_password]
     # Serialize closure with password/profile/MFA changes before removing data.
     set user [save_user $store $user {}]
     set uid [dict get $user id]
@@ -96,6 +96,7 @@ proc ::web::user::action_close_account {config row fields} {
     }
     revoke $store $uid
     remove $store web_user_profiles [dict create id $uid]
+    remove $store web_user_identities [dict create uid $uid]
     if {[remove $store web_user_users [dict create id $uid revision [dict get $user revision]]] != 1} {
         fail 409 "Account changed; retry the request."
     }
@@ -108,7 +109,7 @@ proc ::web::user::action_two_factor {config row fields} {
     set store [dict get $config -store]
     set uid [dict get $row uid]
     set result [dict create message {} debug_code {} delivery {}]
-    if {[dict get $row kind] ne "two-factor"} {fail 401 "Sign in with your password first."}
+    if {[dict get $row kind] ne "two-factor"} {fail 401 "Sign in first."}
     set user [user_by_id $store $uid]
     if {$user eq {} || ![dict get $user active] || [dict get $user mfa_secret] eq {}} {fail 401 "Sign in again."}
     set secret [unseal $store [dict get $user mfa_secret] [list mfa $uid]]
@@ -119,6 +120,7 @@ proc ::web::user::action_two_factor {config row fields} {
     }
     save_user $store $user [dict create last_step $step last_login_at [clock seconds] last_seen_at [clock seconds]]
     dict set result token [rotate $store $row auth $uid {} [session_persistent $row]]
+    if {[dict exists $row google_verified_at]} {google_mark_session $store [dict get $result token] [dict get $row google_verified_at]}
     dict set result view account
     return $result
 }
@@ -132,7 +134,7 @@ proc ::web::user::action_two_factor_setup {config row fields} {
     if {![dict get $user verified]} {fail 403 "Verify your email before enabling an authenticator."}
     if {[dict get $user mfa_secret] ne {}} {fail 409 "Two-factor authentication is already enabled."}
     if {[dict get $fields operation] eq "begin"} {
-        if {![password_ok $store $user [dict get $fields password]]} {fail 401 "Invalid password."}
+        confirm_credentials $store $row $user [field_or_empty $fields password]
         set secret [string trimright [::tmfa::base32_encode [::twebserver::random_bytes 20]] =]
         if {[::tsession::sql::update [dict get $store -sessions] [dict get $row id] \
             [dict create pending_secret [seal $store $secret [list mfa $uid]] expires [expr {[clock seconds] + [property $store challenge_ttl]}]]] != 1} {
@@ -161,7 +163,8 @@ proc ::web::user::action_two_factor_disable {config row fields} {
     set uid [dict get $row uid]
     set result [dict create message {} debug_code {} delivery {}]
     set user [require_user $store $row]
-    if {![password_ok $store $user [dict get $fields password]] || [dict get $user mfa_secret] eq {}} {fail 401 "Invalid credentials."}
+    confirm_credentials $store $row $user [field_or_empty $fields password]
+    if {[dict get $user mfa_secret] eq {}} {fail 401 "Invalid credentials."}
     set secret [unseal $store [dict get $user mfa_secret] [list mfa $uid]]
     if {[totp_step $store $secret [dict get $fields code] [dict get $user last_step]] < 0} {fail 401 "Invalid or already used authenticator code."}
     save_user $store $user {mfa_secret {} last_step -1}
