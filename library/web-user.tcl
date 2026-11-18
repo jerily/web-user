@@ -17,4 +17,4 @@ namespace eval ::web::user {
     }
     unset name version module
 }
-package provide web-user 0.6.2
+package provide web-user 0.7.0

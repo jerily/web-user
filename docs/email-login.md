@@ -15,9 +15,17 @@ requests a code; `$prefix/email-login/verify` accepts it. Both routes allow GET
 to display their forms. Existing `return_to` validation and “Stay signed in”
 behavior apply. All existing active accounts can use a code, including accounts
 whose email has not been verified (since 0.6.2). A successful code check marks
-the email as verified. Unknown and inactive email addresses receive the same
-public response as eligible users but receive no code. This flow does not create
-accounts.
+the email as verified. Since 0.7.0, new addresses also receive a code. Successful verification creates
+a verified, passwordless account and signs the visitor in. First and last names
+remain empty until the user adds them through Profile; public displays use
+“Member” in the meantime. Requesting a code creates no account. Inactive accounts
+receive the same public response but no code and cannot be reactivated this way.
+
+The pending address is encrypted in the expiring browser challenge. Existing
+accounts created in another browser are reused with their credentials and MFA
+intact. Unconfirmed registrations never supply a password or profile for the
+new account. A completed email sign-in provides five minutes of identity proof
+for passwordless account changes, setting a password, and linking Google.
 
 Codes are generated with the package's secure random generator and stored only
 as keyed verifiers in expiring, browser-bound SQL sessions. Successful use

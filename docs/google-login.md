@@ -39,7 +39,8 @@ is empty, which explicitly means password login is disabled. Existing accounts
 are **never automatically linked by email**. Sign into the existing account and
 choose “Link Google account” on the account page. This opens the authenticated
 `GET /google/link` page, where the current password is confirmed before posting
-to `/google/start` with `intent=link`. The account overview has no linking form.
+to `/google/start` with `intent=link`. Passwordless email accounts use an email
+code confirmed within the last five minutes instead. The account overview has no linking form.
 Linking is CSRF protected,
 bound to that session and account revision, and permits one Google identity per
 account. A changed email claim never changes an existing account's address.
@@ -48,16 +49,17 @@ be chosen later through Edit profile.
 
 Local authenticator requirements still apply after Google verification. Until the
 OTP completes, the browser only has a two-factor challenge session. Passwordless
-accounts can confirm their linked Google account from the account page, then set
-a password, close the account or manage MFA within five minutes. This proof is
+accounts can confirm their linked Google account from the account page, or sign
+in with an email code when enabled, then set a password, close the account or
+manage MFA within five minutes. This proof is
 bound to the session; disabling MFA still requires its current unused OTP.
 Accounts with a password continue to require that password for sensitive actions.
 Password-reset email does not silently create a password for Google-only accounts.
 
 Unlinking Google requires a current password and an existing password sign-in
 method, revokes other sessions, and rotates this session. Account closure removes
-identity links. If Google-only users lose access to Google, a host needs its own
-account-recovery policy; this package does not bypass their identity or MFA checks.
+identity links. Email-code sign-in, when enabled, also works for these accounts;
+it preserves their identity links and MFA requirements.
 Google login uses a browser-session cookie; password-login “Stay signed in” behavior
 remains independently available.
 

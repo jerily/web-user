@@ -34,11 +34,11 @@
 {% if google_linked %}
 <p>A Google account is already linked to your account.</p>
 {% else %}
-<p>Confirm your current password, then choose the Google account you want to use to sign in.</p>
+{% if password_enabled %}<p>Confirm your current password, then choose the Google account you want to use to sign in.</p>{% else %}<p>Choose the Google account you want to use to sign in. First confirm your email with a <a href="{{ prefix }}/email-login">new sign-in code</a> if you signed in more than five minutes ago.</p>{% endif %}
 <form method="post" action="{{ prefix }}/google/start">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="intent" value="link">
-<label>Current password <input name="password" type="password" autocomplete="current-password" required></label>
+{% if password_enabled %}<label>Current password <input name="password" type="password" autocomplete="current-password" required></label>{% endif %}
 <button class="account-button" type="submit">Link Google account</button>
 </form>
 {% endif %}
@@ -46,7 +46,7 @@
 {% else %}
 <form method="post" action="{{ prefix }}/{{ view }}{{ return_query }}">
 <input type="hidden" name="csrf" value="{{ csrf }}">
-{% if view == "email-login" %}<p>Enter your account’s email address. We’ll send you a one-time sign-in code.</p>{% endif %}
+{% if view == "email-login" %}<p>Enter your email address. We’ll send you a one-time sign-in code. If you’re new here, confirming the code creates your account.</p>{% endif %}
 {% if view == "email-login/verify" %}<p>Enter the six-digit code from your email. Keep this browser open; the code works only here.</p>{% endif %}
 {% if view == "register" or view == "login" or view == "forgot" or view == "email-login" %}
 <label>Email <input name="email" type="email" value="{{ email }}" autocomplete="email" maxlength="254" required></label>
@@ -60,7 +60,7 @@
 {% if collect_display_name %}<label>Display name (optional) <input name="display_name" value="{{ display_name }}" autocomplete="nickname" maxlength="80"></label><p>Your public name. It does not need to be unique.</p>{% endif %}
 {% if collect_username %}<label>Username <input name="username" value="{{ username }}" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_]{2,31}" required></label><p>A unique public handle. You will still sign in with your email.</p>{% endif %}
 {% endif %}
-{% if not password_enabled and (view == "change-password" or view == "close-account" or view == "two-factor/setup" or view == "two-factor/disable") %}<p>Confirm your Google account from the <a href="{{ prefix }}">account page</a> within five minutes before submitting.</p>{% endif %}
+{% if not password_enabled and (view == "change-password" or view == "close-account" or view == "two-factor/setup" or view == "two-factor/disable") %}<p>Confirm your identity within five minutes before submitting.{% if email_login_enabled %} Use a <a href="{{ prefix }}/email-login">new email sign-in code</a>.{% endif %}{% if google_linked %} You can also confirm Google from the <a href="{{ prefix }}">account page</a>.{% endif %}</p>{% endif %}
 {% if view == "close-account" %}
 <p>This permanently deletes your account and profile and signs you out on every device. This cannot be undone.</p>
 {% endif %}
@@ -111,6 +111,7 @@
 </form>
 {% if view == "email-login/verify" %}<p><a href="{{ prefix }}/email-login{{ return_query }}">Request a new code or use a different email</a></p>{% endif %}
 {% if view == "email-login" or view == "email-login/verify" %}<p><a href="{{ prefix }}/login{{ return_query }}">Back to sign in</a></p>{% endif %}
+{% if view == "register" %}<p>Already have an account? <a href="{{ prefix }}/login{{ return_query }}">Sign in</a></p>{% endif %}
 {% if view == "close-account" %}<p><a href="{{ prefix }}">Cancel</a></p>{% endif %}
 {% if view == "verify" %}
 {% if verification_emails_enabled %}<form class="account-resend" method="post" action="{{ prefix }}/resend-verification{{ return_query }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-secondary" type="submit">Send a new code</button></form>{% endif %}

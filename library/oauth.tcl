@@ -93,17 +93,19 @@ proc ::web::user::passwordless_operation {operation view} {
         return [::tjson::to_json $document]
     } finally {::tjson::destroy $document}
 }
-# Passwordless accounts require a Google flow completed within five minutes.
+# Passwordless accounts require email or Google proof from the last five minutes.
 # A pending MFA challenge is not an authenticated session and cannot use this proof.
 proc ::web::user::confirm_credentials {store row user password} {
     if {[has_password $user]} {
         if {![password_ok $store $user $password]} {fail 401 "Invalid current password."}
         return
     }
+    if {[dict get $row kind] eq "auth" && [dict get $user verified] &&
+        [dict exists $row email_verified_at] && [dict get $row email_verified_at] >= [clock seconds]-300} {return}
     if {[dict get $row kind] ne "auth" || ![dict exists $row google_verified_at] ||
         [dict get $row google_verified_at] < [clock seconds]-300 ||
         ![google_linked $store [dict get $user id]]} {
-        fail 401 "Confirm your Google account from the account page, then try again."
+        fail 401 "Sign in again with an email code or confirm your linked Google account, then try again."
     }
 }
 proc ::web::user::google_mark_session {store token when} {
@@ -180,8 +182,7 @@ proc ::web::user::google_start {config request context params} {
         if {$intent ne "login"} {
             set user [require_user $store $row]; set uid [dict get $user id]
             if {$intent eq "link"} {
-                if {![dict exists $fields password]} {fail 401 "Confirm your current password to link Google."}
-                confirm_credentials $store $row $user [dict get $fields password]
+                confirm_credentials $store $row $user [field_or_empty $fields password]
             }
         }
         set target [requested_return_to $request]

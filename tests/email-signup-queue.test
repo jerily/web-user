@@ -1,0 +1,51 @@
+package require tcltest
+package require pure-tcl-aws-sqs
+package require pure-tcl-aws-ses
+namespace import ::tcltest::*
+if {![llength [info commands ::authtest::setup]]} {source [file join [file dirname [info script]] auth.test]}
+namespace eval ::signupqueue {}
+
+test email-signup-queue {new-account requests queue their code before waking the worker; SES is never called inline} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    dict set ::authtest::store -env PROD
+    $::authtest::router destroy
+    set ::authtest::router [::tpathexp::router]
+    set ::authtest::config [::web::user::mount $::authtest::router -store $::authtest::store -config {
+        origin https://community.test email_enabled true email_login_enabled true
+        email_from sender@example.com email_region us-east-1 email_queue_enabled true
+        email_queue_url https://sqs.us-east-1.amazonaws.com/123456789012/user-emails
+        email_queue_callback ::signupqueue::queued
+    }]
+    set ::signupqueue::calls {}
+    rename ::aws::sqs::create ::signupqueue::sqs_create
+    rename ::aws::ses::create ::signupqueue::ses_create
+    proc ::aws::sqs::create {options} {lappend ::signupqueue::calls create; return ::signupqueue::client}
+    proc ::aws::ses::create {options} {lappend ::signupqueue::calls unexpected-SES; error "unexpected SES"}
+    proc ::signupqueue::client {method args} {
+        lappend ::signupqueue::calls $method
+        if {$method eq "send_message"} {
+            set ::signupqueue::queue [lindex $args 0]
+            set ::signupqueue::body [::tjson::json_to_simple [lindex $args 1]]
+        }
+    }
+    proc ::signupqueue::queued {url} {lappend ::signupqueue::calls callback; set ::signupqueue::wake $url}
+} -body {
+    ::authtest::call GET /user/email-login
+    set before [clock seconds]
+    set result [list [::authtest::call POST /user/email-login {email new@example.com}] \
+        $::signupqueue::calls [expr {$::signupqueue::wake eq $::signupqueue::queue}]]
+    set body $::signupqueue::body
+    lappend result [dict get $body message to] [expr {[dict get $body expires_at] >= $before+900}] \
+        [llength [::web::user::rows $::authtest::store web_user_users]]
+    regexp {code is: ([0-9]{6})} [dict get $body message text] -> code
+    lappend result [expr {[string first $code [dict get $::authtest::last body]] < 0}] \
+        [::authtest::call POST /user/email-login/verify [dict create code $code]] \
+        [dict get [::authtest::me] email_verified]
+    set result
+} -cleanup {
+    rename ::aws::sqs::create {}; rename ::signupqueue::sqs_create ::aws::sqs::create
+    rename ::aws::ses::create {}; rename ::signupqueue::ses_create ::aws::ses::create
+    ::authtest::cleanup
+} -result {200 {create send_message destroy callback} 1 new@example.com 1 0 1 200 1}
+
+cleanupTests
