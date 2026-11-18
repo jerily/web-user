@@ -12,6 +12,7 @@ proc ::web::user::action_login {config row fields} {
     set user [user_by_email $store $address]
     if {$user eq {}} {
         # Match a normal password verification's work for an unknown address.
+        package require bcrypt 2.0.1
         ::bcrypt::hashpw [random_token] [::bcrypt::gensalt [property $store bcrypt_cost]]
         fail 401 "Invalid email or password."
     }
@@ -141,6 +142,7 @@ proc ::web::user::action_two_factor_setup {config row fields} {
     if {[dict get $user mfa_secret] ne {}} {fail 409 "Two-factor authentication is already enabled."}
     if {[dict get $fields operation] eq "begin"} {
         confirm_credentials $store $row $user [field_or_empty $fields password]
+        package require tmfa 1.1.2
         set secret [string trimright [::tmfa::base32_encode [::twebserver::random_bytes 20]] =]
         if {[::tsession::sql::update [dict get $store -sessions] [dict get $row id] \
             [dict create pending_secret [seal $store $secret [list mfa $uid]] expires [expr {[clock seconds] + [property $store challenge_ttl]}]]] != 1} {

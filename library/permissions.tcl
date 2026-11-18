@@ -1,29 +1,5 @@
 # Configuration is authoritative for one tenant. Membership uses the same keyed
 # email index as accounts, so it also covers people who register after a sync.
-proc ::web::user::access_config {groups permissions} {
-    set result [dict create groups {} permissions {}]
-    dict for {group addresses} $groups {
-        if {![regexp {^[a-z][a-z0-9_-]{0,63}$} $group]} {error "invalid group name: $group"}
-        set members {}
-        foreach address [split $addresses ,] {
-            if {[string trim $address] eq {}} {continue}
-            lappend members [email $address]
-        }
-        dict set result groups $group [lsort -unique $members]
-    }
-    dict for {group names} $permissions {
-        if {![dict exists $result groups $group]} {error "permissions refer to an undefined group: $group"}
-        set grants {}
-        foreach name [split $names ,] {
-            set name [string trim $name]
-            if {$name eq {}} {continue}
-            if {![regexp {^[a-z][a-z0-9_.:-]{0,127}$} $name]} {error "invalid permission: $name"}
-            lappend grants $name
-        }
-        dict set result permissions $group [lsort -unique $grants]
-    }
-    return $result
-}
 
 # Explicit initialization/maintenance API. Validate everything before changing
 # rows, then replace the tenant's membership and grants atomically. No plaintext

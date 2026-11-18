@@ -5,4 +5,8 @@
 # 
 
 # Register the package and load its dependencies.
-package ifneeded web-user 0.7.1 [list source [file join $dir library web-user.tcl]]
+package ifneeded web-user 0.7.2 [list source [file join $dir library web-user.tcl]]
+
+package ifneeded web-user::routes 1.0 [list source [file join $dir library routes.tcl]]
+
+package ifneeded web-user::config 1.0 [list source [file join $dir library config.tcl]]

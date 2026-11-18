@@ -136,9 +136,9 @@ proc ::web::user::admin_users {config request context params} {
         dict set fields editing {BOOL 0}
         dict set fields can_manage_users {BOOL 1}
         dict set fields admin_view {BOOL 1}
-        set templates [dict get $config -templates]
-        response 200 [::jinja2::render [dict get $templates admin-users.html.jinja] \
-            [::tjson::typed_to_json [list M $fields]] -templates $templates -path admin-users.html.jinja]
+
+        response 200 [render_template $config admin-users.html.jinja \
+            [::tjson::typed_to_json [list M $fields]]]
     } trap {WEB USER} {message options} {
         response [lindex [dict get $options -errorcode] 2] $message {text/plain; charset=utf-8}
     }

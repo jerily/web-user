@@ -6,15 +6,15 @@
 
 # Validate configuration and mount the account routes and templates.
 proc ::web::user::mount {router args} {
-    set config [mount_store [options {-store {} -connection {} -policy {} -config {} -secret_config {}} {*}$args]]
+    set config [prepare_mount {*}$args]
     try {mount_configured $router $config} on error {message opts} {
         release $config
         return -options $opts $message
     }
 }
-proc ::web::user::mount_configured {router config} {
+proc ::web::user::prepare_configured {config} {
     variable root
-    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} email_login_enabled false master_template {} templates {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {} validate_templates true} {*}[dict get $config -config]]
+    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} email_login_enabled false master_template {} templates {} template_renderer {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {} validate_templates true} {*}[dict get $config -config]]
     if {![string is boolean -strict [dict get $settings email_login_enabled]]} {error "email_login_enabled must be a boolean"}
     foreach key {prefix deliver} {
         dict set config -$key [dict get $settings $key]
@@ -41,53 +41,44 @@ proc ::web::user::mount_configured {router config} {
     dict set config -cookie $name
     dict set config -session-cookie [::tsession::cookie::create -name $name -mac [dict get $store -mac] \
         -secure [expr {[dict get $store -env] eq "PROD"}]]
-    dict set config -templates [prepare_templates $settings]
+    if {[dict get $settings template_renderer] eq {}} {
+        dict set config -templates [prepare_templates $settings]
+    }
     dict set config -operations [request_operations $store]
     validate_email_config $config
+    return [google_configure $config]
+}
+
+proc ::web::user::prepare_mount {args} {
+    set config [mount_store [options {-store {} -connection {} -policy {} -config {} -secret_config {}} {*}$args]]
+    try {prepare_configured $config} on error {message opts} {
+        release $config
+        return -options $opts $message
+    }
+}
+
+proc ::web::user::mount_configured {router config} {
+    set prefix [dict get $config -prefix]
+    set settings [dict get $config -config]
     # Check collisions before installing any route.
     foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/resend-verification $prefix/login \
         $prefix/forgot $prefix/reset $prefix/change-password $prefix/close-account $prefix/two-factor $prefix/two-factor/setup \
         $prefix/two-factor/disable $prefix/logout $prefix/profile $prefix/admin/users $prefix/_assets/admin.css $prefix/google/link $prefix/google/start $prefix/google/callback $prefix/google/unlink $prefix/email-login $prefix/email-login/verify] {
         if {[dict get [$router match GET $path] statusCode] != 404} {error "route already mounted: $path"}
     }
-    set config [google_configure $config]
-    if {[dict get $config -config google_enabled]} {
-        $router add GET $prefix/google/link [list ::web::user::google_link $config] -strict true
-        $router add POST $prefix/google/start [list ::web::user::google_start $config] -strict true
-        $router add GET $prefix/google/callback [list ::web::user::google_callback $config] -strict true
-        $router add POST $prefix/google/unlink [list ::web::user::google_unlink $config] -strict true
+    foreach route [::web::user::route_specs $prefix $config $settings [dict get $config -store -config]] {
+        lassign $route method path handler
+        $router add $method $path $handler -strict true
     }
-    if {[dict get $settings email_login_enabled]} {
-        $router add {GET POST} $prefix/email-login [list ::web::user::email_login $config] -strict true
-        $router add {GET POST} $prefix/email-login/verify [list ::web::user::email_login_verify $config] -strict true
-    }
-    $router add GET $prefix [list ::web::user::account $config] -strict true
-    $router add GET $prefix/ [list ::web::user::account $config] -strict true
-    $router add GET $prefix/admin/users [list ::web::user::admin_users $config] -strict true
-    $router add GET $prefix/_assets/admin.css ::web::user::admin_stylesheet -strict true
-    $router add {GET POST} $prefix/register [list ::web::user::register $config] -strict true
-    $router add {GET POST} $prefix/verify [list ::web::user::verify $config] -strict true
-    $router add POST $prefix/resend-verification [list ::web::user::resend_verification $config] -strict true
-    $router add {GET POST} $prefix/login [list ::web::user::login $config] -strict true
-    $router add {GET POST} $prefix/forgot [list ::web::user::forgot $config] -strict true
-    $router add {GET POST} $prefix/reset [list ::web::user::reset $config] -strict true
-    $router add {GET POST} $prefix/change-password [list ::web::user::change_password $config] -strict true
-    $router add {GET POST} $prefix/close-account [list ::web::user::close_account $config] -strict true
-    $router add {GET POST} $prefix/two-factor [list ::web::user::two_factor $config] -strict true
-    $router add {GET POST} $prefix/two-factor/setup [list ::web::user::two_factor_setup $config] -strict true
-    $router add {GET POST} $prefix/two-factor/disable [list ::web::user::two_factor_disable $config] -strict true
-    if {[property $store collect_names] || [property $store collect_display_name] || [property $store collect_username]} {
-        $router add {GET POST} $prefix/profile [list ::web::user::profile $config] -strict true
-    }
-    $router add POST $prefix/logout [list ::web::user::logout $config] -strict true
     return $config
 }
 
 # Prepare the exact host/package composition without opening storage or mounting
 # routes. Production hosts may skip validation after checking their artifact.
 proc ::web::user::prepare_templates {{settings {}}} {
+    package require jinja2 0.2.0
     variable root
-    set settings [dict merge {master_template {} templates {} validate_templates true} $settings]
+    set settings [dict merge {master_template {} templates {} template_renderer {} validate_templates true} $settings]
     if {![string is boolean -strict [dict get $settings validate_templates]]} {error "validate_templates must be a boolean"}
     set templates {}
     foreach filename {page.html.jinja form.html.jinja profile.html.jinja admin-users.html.jinja} {dict set templates $filename [read_text [file join $root assets $filename]]}
@@ -100,4 +91,13 @@ proc ::web::user::prepare_templates {{settings {}}} {
         dict for {name text} $templates {::jinja2::validate $text -templates $templates -path $name}
     }
     return $templates
+}
+
+# Hosts may render by name without supplying template strings in mount options.
+proc ::web::user::render_template {config name json} {
+    set renderer [dict get $config -config template_renderer]
+    if {$renderer ne {}} {return [{*}$renderer $name $json]}
+    package require jinja2 0.2.0
+    set templates [dict get $config -templates]
+    ::jinja2::render [dict get $templates $name] $json -templates $templates -path $name
 }

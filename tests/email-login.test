@@ -1,3 +1,4 @@
+package require tmfa
 package require tcltest
 namespace import ::tcltest::*
 if {![llength [info commands ::authtest::setup]]} {source [file join [file dirname [info script]] auth.test]}
