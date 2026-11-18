@@ -28,14 +28,6 @@ proc ::web::user::unseal {store value purpose} {
     encoding convertfrom utf-8 [::tink::aead::decrypt [dict get $store -aead] \
         [binary decode base64 -strict $value] [encoding convertto utf-8 [list web-user [dict get $store -tenant] $purpose]]]
 }
-# Normalize and validate an email address.
-proc ::web::user::email {value} {
-    set value [string tolower [string trim $value]]
-    if {[string length $value] > 254 || ![regexp {^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$} $value]} {
-        fail 400 "Enter a valid email address."
-    }
-    return $value
-}
 # The persistent site salt and normalized address form one unambiguous MAC input.
 # Tenant and purpose binding come from tag; the MAC key remains host-owned.
 proc ::web::user::email_key {store value} {
@@ -49,6 +41,7 @@ proc ::web::user::password_hash {value {config {}}} {
     if {[string length $value] < $minimum || [string length $bytes] > 72 || [string first \x00 $value] >= 0} {
         fail 400 "Password must contain at least $minimum characters, at most 72 UTF-8 bytes, and no NUL characters."
     }
+    package require bcrypt 2.0.1
     ::bcrypt::hashpw $value [::bcrypt::gensalt [dict get $config bcrypt_cost]]
 }
 # Decrypt the account-bound bcrypt hash only while checking a password. Bare
@@ -61,6 +54,7 @@ proc ::web::user::password_ok {store user value} {
     }]} {return 0}
     # Fail closed for unsupported hashes and unreasonable stored costs.
     if {![regexp {^\$2[aby]\$(0[4-9]|1[0-6])\$[./A-Za-z0-9]{53}$} $hash]} {return 0}
+    package require bcrypt 2.0.1
     ::bcrypt::checkpw $value $hash
 }
 # Verify a tenant- and purpose-bound MAC.
@@ -82,6 +76,7 @@ proc ::web::user::totp_step {store secret code last} {
     foreach step $steps {
         if {$step < 0} {continue}
         # Use Tink's native MAC verification for the comparison.
+        package require tmfa 1.1.2
         set expected [tag $store [::tmfa::get_hotp $secret $step $digits [property $store totp_algorithm]] totp-check]
         if {$step > $last && [verify_tag $store $expected $code totp-check]} {return $step}
     }

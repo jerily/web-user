@@ -4,8 +4,6 @@
 # SPDX-License-Identifier: MIT.
 #
 
-# Return a structured account HTTP error.
-proc ::web::user::fail {status message} {return -code error -errorcode [list WEB USER $status] $message}
 # Build an uncached response with account security headers.
 proc ::web::user::response {status body {type {text/html; charset=utf-8}}} {
     # no-referrer makes browsers send Origin: null on form POSTs, which fails
@@ -69,24 +67,6 @@ proc ::web::user::csrf {config action request context submitted} {
     expr {[verify_tag [dict get $config -store] $submitted $token csrf] &&
         ([header $request origin] eq {} || [header $request origin] eq $expectedOrigin)}
 }
-# Decode form text with strict percent and UTF-8 validation.
-proc ::web::user::decode {value} {
-    set value [string map {+ { }} $value]
-    set bytes {}
-    for {set i 0} {$i < [string length $value]} {incr i} {
-        set character [string index $value $i]
-        if {$character eq "%"} {
-            set hex [string range $value [expr {$i+1}] [expr {$i+2}]]
-            if {![regexp {^[a-fA-F0-9]{2}$} $hex]} {fail 400 "Invalid percent encoding."}
-            append bytes [binary format H2 $hex]
-            incr i 2
-        } else {append bytes [encoding convertto utf-8 $character]}
-    }
-    if {[catch {encoding convertfrom utf-8 $bytes} text] || [encoding convertto utf-8 $text] ne $bytes || [string first \x00 $text] >= 0} {
-        fail 400 "Invalid UTF-8 form."
-    }
-    return $text
-}
 # Parse a bounded URL-encoded body and reject duplicate fields.
 proc ::web::user::form {request {maximum 32768}} {
     if {[string tolower [string trim [lindex [split [header $request content-type] {;}] 0]]] ne "application/x-www-form-urlencoded"} {fail 415 "Use URL-encoded form data."}
@@ -147,7 +127,9 @@ proc ::web::user::render {config view token {extra {}}} {
     if {$view in {account profile change-password close-account two-factor/setup two-factor/disable google/link}} {require_user $store $row}
     if {$view eq "two-factor/setup" && [dict get $row pending_secret] ne {}} {
         set secret [unseal $store [dict get $row pending_secret] [list mfa [dict get $user id]]]
+        package require tmfa 1.1.2
         set uri [::tmfa::keyuri $secret totp [dict get $fields email] -issuer [dict get $config -config issuer] {*}[totp_options $store]]
+        package require tqrcodegen 1.1.1
         dict set fields qr [::tqrcodegen::encode_to_svg $uri]
         dict set fields secret $secret
         if {[dict get $store -env] eq "LOCAL"} {dict set fields debug_code [totp_code $store $secret]}
@@ -184,9 +166,9 @@ proc ::web::user::render {config view token {extra {}}} {
     dict set context email_login_enabled [list BOOL [dict get $config -config email_login_enabled]]
     dict set context password_enabled [list BOOL [expr {$user eq {} || [has_password $user]}]]
     dict set context google_linked [list BOOL [expr {$user ne {} && [google_linked $store [dict get $user id]]}]]
-    set templates [dict get $config -templates]
-    response 200 [::jinja2::render [dict get $templates form.html.jinja] \
-        [::tjson::typed_to_json [list M $context]] -templates $templates -path form.html.jinja]
+
+    response 200 [render_template $config form.html.jinja \
+        [::tjson::typed_to_json [list M $context]]]
 }
 # Keep expected account errors inside a usable form, without replaying secrets.
 proc ::web::user::form_error {config view token context fields message status detail needsCaptcha} {

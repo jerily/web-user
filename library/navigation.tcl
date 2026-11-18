@@ -42,7 +42,7 @@ proc ::web::user::requested_return_to {request} {
 proc ::web::user::return_query {target} {
     set target [safe_return_to $target]
     if {$target eq {}} {return {}}
-    return ?return_to=[::tmfa::_uri_component $target]
+    return ?return_to=[uri_component $target]
 }
 
 proc ::web::user::redirect {location} {
@@ -54,4 +54,16 @@ proc ::web::user::redirect {location} {
 # Hosts can use this for other pages that require authentication too.
 proc ::web::user::sign_in_redirect {config request} {
     redirect [dict get $config -prefix]/login[return_query [request_target $request]]
+}
+
+proc ::web::user::uri_component {text} {
+    set result {}
+    binary scan [encoding convertto utf-8 $text] cu* bytes
+    foreach byte $bytes {
+        if {($byte >= 65 && $byte <= 90) || ($byte >= 97 && $byte <= 122) ||
+            ($byte >= 48 && $byte <= 57) || $byte in {45 46 95 126}} {
+            append result [format %c $byte]
+        } else {append result [format %%%02X $byte]}
+    }
+    return $result
 }

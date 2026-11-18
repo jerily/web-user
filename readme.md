@@ -289,3 +289,25 @@ the display contract.
 Account identities use `user_<ksuid>` across registration, account and profile
 records. See [user ID migration](docs/user-ids.md) for the explicit maintenance
 step that updates existing identities and their encrypted data and sessions.
+
+## Deferred loading
+
+`package require web-user::routes 1.0` loads only route declarations.
+`::web::user::route_specs prefix binding ?settings? ?policy?` returns
+`{methods pattern handlerPrefix}` records. `binding` is opaque: a host can bind
+its prepared configuration or a reference resolved by its dispatcher. Account
+routes use display settings and policy to select optional routes at startup.
+
+`::web::user::prepare_mount` accepts the same options as `mount`, without the
+router argument, and prepares resources without registering routes. The normal
+`mount` procedure uses the same route definitions. Keep the returned configuration
+for the mount's lifetime; a lazy dispatcher prepares it once on first use.
+Both APIs retain the `-secret_config` option.
+
+The `template_renderer` entry in `-config` accepts a trusted command prefix. It
+receives `name json` (plus an optional override dictionary for static content)
+and returns rendered HTML. When supplied, mounting does not read template files
+or embed template strings in the configuration. The host owns rendering caches
+and must validate the complete package/layout composition during packaging/CI.
+The existing `master_template`, `templates`, and `prepare_templates` APIs remain
+available for compatibility and artifact validation.
