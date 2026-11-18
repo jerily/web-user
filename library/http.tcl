@@ -128,6 +128,7 @@ proc ::web::user::render {config view token {extra {}}} {
     set usernameConflict 0
     if {$view eq "email-login"} {dict set fields title {Sign in with email}}
     if {$view eq "email-login/verify"} {dict set fields title {Check your email}}
+    if {$view eq "google/link"} {dict set fields title {Link Google account}}
     if {[dict exists $extra username_conflict]} {set usernameConflict [dict get $extra username_conflict]}
     set verified 0
     set enabled 0
@@ -143,7 +144,7 @@ proc ::web::user::render {config view token {extra {}}} {
         set verified [dict get $public email_verified]
         set enabled [dict get $public mfa_enabled]
     }
-    if {$view in {account profile change-password close-account two-factor/setup two-factor/disable}} {require_user $store $row}
+    if {$view in {account profile change-password close-account two-factor/setup two-factor/disable google/link}} {require_user $store $row}
     if {$view eq "two-factor/setup" && [dict get $row pending_secret] ne {}} {
         set secret [unseal $store [dict get $row pending_secret] [list mfa [dict get $user id]]]
         set uri [::tmfa::keyuri $secret totp [dict get $fields email] -issuer [dict get $config -config issuer] {*}[totp_options $store]]
@@ -194,7 +195,7 @@ proc ::web::user::form_error {config view token context fields message status de
     set kind [expr {$row eq {} ? "" : [dict get $row kind]}]
     if {$view eq "logout"} {set view account}
     if {$view eq "resend-verification"} {set view [expr {$kind eq "auth" ? "account" : "verify"}]}
-    if {$view in {account profile change-password close-account two-factor/setup two-factor/disable} &&
+    if {$view in {account profile change-password close-account two-factor/setup two-factor/disable google/link} &&
         [authenticated $store $row] eq {}} {
         if {![dict exists $context return_to] || [dict get $context return_to] eq {}} {
             dict set context return_to [dict get $config -prefix]/[expr {$view eq "account" ? "" : $view}]
@@ -246,7 +247,7 @@ proc ::web::user::handle {config view handler challenge request context} {
         set returnTo [requested_return_to $request]
         dict set context return_to $returnTo
         if {[dict get $request method] ne "POST"} {
-            if {$view in {account profile change-password close-account two-factor/setup two-factor/disable} &&
+            if {$view in {account profile change-password close-account two-factor/setup two-factor/disable google/link} &&
                 [authenticated $store $row] eq {}} {
                 return [sign_in_redirect $config $request]
             }

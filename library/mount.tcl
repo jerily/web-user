@@ -52,11 +52,12 @@ proc ::web::user::mount_configured {router config} {
     # Check collisions before installing any route.
     foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/resend-verification $prefix/login \
         $prefix/forgot $prefix/reset $prefix/change-password $prefix/close-account $prefix/two-factor $prefix/two-factor/setup \
-        $prefix/two-factor/disable $prefix/logout $prefix/profile $prefix/admin/users $prefix/_assets/admin.css $prefix/google/start $prefix/google/callback $prefix/google/unlink $prefix/email-login $prefix/email-login/verify] {
+        $prefix/two-factor/disable $prefix/logout $prefix/profile $prefix/admin/users $prefix/_assets/admin.css $prefix/google/link $prefix/google/start $prefix/google/callback $prefix/google/unlink $prefix/email-login $prefix/email-login/verify] {
         if {[dict get [$router match GET $path] statusCode] != 404} {error "route already mounted: $path"}
     }
     set config [google_configure $config]
     if {[dict get $config -config google_enabled]} {
+        $router add GET $prefix/google/link [list ::web::user::google_link $config] -strict true
         $router add POST $prefix/google/start [list ::web::user::google_start $config] -strict true
         $router add GET $prefix/google/callback [list ::web::user::google_callback $config] -strict true
         $router add POST $prefix/google/unlink [list ::web::user::google_unlink $config] -strict true

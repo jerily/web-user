@@ -22,7 +22,7 @@
 <form method="post" action="{{ prefix }}/google/start"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="intent" value="reauth"><button class="account-button" type="submit">Confirm Google account</button></form>
 {% if password_enabled %}<form method="post" action="{{ prefix }}/google/unlink"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Current password <input name="password" type="password" autocomplete="current-password" required></label><button class="account-button account-button-secondary" type="submit">Unlink Google</button></form>{% endif %}
 {% else %}
-<form method="post" action="{{ prefix }}/google/start"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="intent" value="link"><label>Current password <input name="password" type="password" autocomplete="current-password" required></label><button class="account-button" type="submit">Link Google account</button></form>
+<p><a href="{{ prefix }}/google/link">Link Google account</a></p>
 {% endif %}
 {% endif %}
 {% if can_manage_users %}<p><a href="{{ prefix }}/admin/users">Manage users</a></p>{% endif %}
@@ -30,6 +30,19 @@
 {% if mfa_enabled %}<p>Authenticator enabled.</p><a href="{{ prefix }}/two-factor/disable">Disable authenticator</a>{% elif email_verified %}<p>Add an authenticator app to protect your account.</p><a href="{{ prefix }}/two-factor/setup">Set up authenticator</a>{% endif %}
 <form method="post" action="{{ prefix }}/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-secondary" type="submit">Sign out</button></form>
 <p><a class="account-danger" href="{{ prefix }}/close-account">Close account</a></p>
+{% elif view == "google/link" %}
+{% if google_linked %}
+<p>A Google account is already linked to your account.</p>
+{% else %}
+<p>Confirm your current password, then choose the Google account you want to use to sign in.</p>
+<form method="post" action="{{ prefix }}/google/start">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="intent" value="link">
+<label>Current password <input name="password" type="password" autocomplete="current-password" required></label>
+<button class="account-button" type="submit">Link Google account</button>
+</form>
+{% endif %}
+<p><a href="{{ prefix }}">Back to account</a></p>
 {% else %}
 <form method="post" action="{{ prefix }}/{{ view }}{{ return_query }}">
 <input type="hidden" name="csrf" value="{{ csrf }}">

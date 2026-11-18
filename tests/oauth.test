@@ -43,6 +43,53 @@ proc ::googletest::cleanup {} {
     ::tink::unregister_keyset $::googletest::key
     ::authtest::cleanup
 }
+test google-link-page {account overview links to a separate password confirmation page without starting OAuth} -setup {
+    ::googletest::setup
+    ::authtest::register
+    ::authtest::login
+} -body {
+    set result [list [::authtest::call GET /user]]
+    set body [dict get $::authtest::last body]
+    lappend result [string match {*href="/user/google/link">Link Google account</a>*} $body] \
+        [string match {*type="password"*} $body] [string match {*name="intent" value="link"*} $body]
+    lappend result [::authtest::call GET /user/google/link]
+    set body [dict get $::authtest::last body]
+    lappend result [string match {*<h1 id="account-title">Link Google account</h1>*} $body] \
+        [string match {*action="/user/google/start"*} $body] \
+        [string match {*name="intent" value="link"*} $body] \
+        [string match {*name="password" type="password" autocomplete="current-password" required*} $body] \
+        [expr {$::authtest::csrf eq [::web::user::csrf_token $::authtest::config [::authtest::token]]}] \
+        [string match {*href="/user">Back to account</a>*} $body] \
+        [dict get $::authtest::last headers cache-control] \
+        [llength [dict get [::tpersist::db_execute $::authtest::db [::tpersist::db_select oauth2_records]] rows]]
+    set result
+} -cleanup {::googletest::cleanup} -result {200 1 0 0 200 1 1 1 1 1 1 no-store 0}
+test google-link-page-auth {anonymous visitors sign in before linking; the page does not accept POST} -setup {
+    ::googletest::setup
+} -body {
+    set result {}
+    foreach method {GET HEAD} {
+        lappend result [::authtest::call $method /user/google/link] \
+            [dict get $::authtest::last headers Location]
+    }
+    lappend result [::authtest::call POST /user/google/link]
+    set result
+} -cleanup {::googletest::cleanup} -result {302 /user/login?return_to=%2Fuser%2Fgoogle%2Flink 302 /user/login?return_to=%2Fuser%2Fgoogle%2Flink 405}
+test google-link-page-disabled {Google linking page is absent when Google is disabled} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    list [::authtest::call GET /user/google/link] [::authtest::call HEAD /user/google/link]
+} -cleanup {::authtest::cleanup} -result {404 404}
+test google-link-page-linked {already-linked passwordless accounts are not offered another linking form} -setup {
+    ::googletest::setup
+    ::authtest::call GET [::googletest::start]
+} -body {
+    set result [list [::authtest::call GET /user/google/link]]
+    set body [dict get $::authtest::last body]
+    lappend result [string match {*A Google account is already linked*} $body] \
+        [string match {*name="intent" value="link"*} $body] [string match {*type="password"*} $body]
+    set result
+} -cleanup {::googletest::cleanup} -result {200 1 0 0}
 test google-login {verified Google identity creates a passwordless account and rotates cookie} -setup {::googletest::setup} -body {
     set before $::authtest::cookie
     set callback [::googletest::start]
@@ -64,6 +111,7 @@ test google-no-email-link {matching email never links a local account automatica
 } -cleanup {::googletest::cleanup} -result {409 0}
 test google-link {linking requires CSRF and current password; unlink keeps password login} -setup {::googletest::setup} -body {
     ::authtest::register; ::authtest::login
+    ::authtest::call GET /user/google/link
     set result [list [::authtest::call POST /user/google/start {intent link password wrong}] \
         [::authtest::call POST /user/google/start {intent link csrf wrong password wrong}]]
     set callback [::googletest::start [dict create intent link password $::authtest::password]]
@@ -94,8 +142,9 @@ test google-mfa {Google login cannot bypass the local authenticator} -setup {::g
     ::authtest::call POST /user/logout
     set status [::authtest::call GET [::googletest::start]]
     set row [::web::user::session $::authtest::store [::authtest::token]]
-    list $begin $confirmed $status [dict get $row kind] [::web::user::authenticated $::authtest::store $row]
-} -cleanup {::googletest::cleanup} -result {200 200 302 two-factor {}}
+    list $begin $confirmed $status [dict get $row kind] [::web::user::authenticated $::authtest::store $row] \
+        [::authtest::call GET /user/google/link] [dict get $::authtest::last headers Location]
+} -cleanup {::googletest::cleanup} -result {200 200 302 two-factor {} 302 /user/login?return_to=%2Fuser%2Fgoogle%2Flink}
 test google-invalid-token {nonce mismatch never creates an account} -setup {::googletest::setup} -body {
     set ::googletest::tamper nonce
     list [::authtest::call GET [::googletest::start]] [llength [::web::user::rows $::authtest::store web_user_users]]
