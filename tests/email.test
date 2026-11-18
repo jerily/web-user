@@ -208,4 +208,13 @@ test email-queue-6 {explicit transport still takes precedence over queueing} -se
     ::web::user::deliver $::mailtest::config reset person@example.com 123456
     set ::mailtest::calls
 } -cleanup {::mailtest::queue_cleanup} -result {{reset person@example.com 123456}}
+test email-queue-login {one-time sign-in emails expire in the delivery queue and use the verification URL} -setup {
+    ::mailtest::queue_setup
+} -body {
+    set now [clock seconds]
+    ::web::user::deliver $::mailtest::config login person@example.com 123456
+    set body [::tjson::json_to_simple [lindex $::mailtest::calls 1 2]]
+    list [expr {[dict get $body expires_at] >= $now + 900}] \
+        [string match {*one-time sign-in code*123456*browser*email-login/verify*} [dict get $body message text]]
+} -cleanup ::mailtest::queue_cleanup -result {1 1}
 cleanupTests

@@ -115,6 +115,19 @@ per mount and do not modify package defaults. The example loads site and per-pac
 
 ## Store configuration
 
+Enable passwordless email sign-in with `-config {email_login_enabled true ...}`.
+It is disabled by default and requires `email_enabled` in PROD. The routes are
+`GET/POST $prefix/email-login` and `GET/POST $prefix/email-login/verify`.
+Only active accounts with verified email can sign in; new visitors register first.
+The six-digit code is bound to the requesting browser, expires after `code_ttl`,
+and is consumed once. `challenge_limit` bounds guesses for its entire lifetime;
+the existing account/IP limits, `resend_cooldown`, and registration CAPTCHA
+policy also apply. MFA remains required. See [Email sign-in](docs/email-login.md).
+
+Before upgrading to 0.6.1, run `::web::user::initdb $connection` to add
+`last_email_login_at` with a zero default. “Manage users” shows linked identity
+providers and the last completed email-code sign-in, including MFA completion.
+
 Pass a trusted dictionary to `create -connection $connection -config $account`.
 Required fields are `tenant`, `aead`, `mac` (registered key handles owned by
 the worker), and `email_hash_salt`. All store properties belong in `-config`.

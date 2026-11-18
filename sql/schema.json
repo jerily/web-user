@@ -61,6 +61,11 @@
           "type": "bigint",
           "not_null": true,
           "default": 0
+        },
+        "last_email_login_at": {
+          "type": "bigint",
+          "not_null": true,
+          "default": 0
         }
       },
       "primary_key": [

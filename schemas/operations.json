@@ -506,5 +506,78 @@
         }
       }
     }
+  },
+  "email-login": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "email": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 254
+              },
+              "captcha_id": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "captcha_answer": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "stay_signed_in": {
+                "type": "string",
+                "enum": [
+                  "1"
+                ]
+              }
+            },
+            "required": [
+              "csrf",
+              "email"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "email-login/verify": {
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "csrf": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "code": {
+                "type": "string",
+                "minLength": 6,
+                "maxLength": 6,
+                "pattern": "^[0-9]{6}$"
+              }
+            },
+            "required": [
+              "csrf",
+              "code"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
   }
 }

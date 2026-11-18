@@ -126,6 +126,8 @@ proc ::web::user::render {config view token {extra {}}} {
         view $view prefix [dict get $config -prefix] brand [dict get $config -config title] \
         csrf [csrf_token $config $token] message {} debug_code {} email {} first_name {} last_name {} display_name {} username {} qr {} secret {} captcha_png {} captcha_id {} return_query {}] $extra]
     set usernameConflict 0
+    if {$view eq "email-login"} {dict set fields title {Sign in with email}}
+    if {$view eq "email-login/verify"} {dict set fields title {Check your email}}
     if {[dict exists $extra username_conflict]} {set usernameConflict [dict get $extra username_conflict]}
     set verified 0
     set enabled 0
@@ -178,6 +180,7 @@ proc ::web::user::render {config view token {extra {}}} {
     dict set context can_manage_users [list BOOL [expr {$user ne {} && [has_permission $store [dict get $user id] users.manage]}]]
     dict set context admin_view {BOOL 0}
     dict set context google_enabled [list BOOL [dict get $config -config google_enabled]]
+    dict set context email_login_enabled [list BOOL [dict get $config -config email_login_enabled]]
     dict set context password_enabled [list BOOL [expr {$user eq {} || [has_password $user]}]]
     dict set context google_linked [list BOOL [expr {$user ne {} && [google_linked $store [dict get $user id]]}]]
     set templates [dict get $config -templates]
@@ -202,6 +205,7 @@ proc ::web::user::form_error {config view token context fields message status de
     if {$view eq "two-factor" && $kind ne "two-factor"} {set view login}
     if {$view eq "verify" && $kind ni {verify verify-email}} {set view register}
     if {$view eq "reset" && $kind ne "reset"} {set view forgot}
+    if {$view eq "email-login/verify" && $kind ne "email-login"} {set view email-login}
     if {$row eq {}} {
         set token {}
         if {$status != 429} {
@@ -246,13 +250,16 @@ proc ::web::user::handle {config view handler challenge request context} {
                 [authenticated $store $row] eq {}} {
                 return [sign_in_redirect $config $request]
             }
-            if {$returnTo ne {} && $view in {login register} && [authenticated $store $row] ne {}} {
+            if {$returnTo ne {} && $view in {login register email-login email-login/verify} && [authenticated $store $row] ne {}} {
                 return [redirect $returnTo]
             }
             if {$row eq {}} {
                 # Avoid unbounded anonymous-session creation from one peer.
                 throttle $store [list browse [peer $context]] [property $store browse_limit]
                 set token [new_session $store]
+            }
+            if {$view eq "email-login/verify" && ($row eq {} || [dict get $row kind] ne "email-login")} {
+                return [set_cookie $config [redirect [dict get $config -prefix]/email-login[return_query $returnTo]] $token]
             }
             return [form_response $config $view $token $context]
         }
@@ -279,12 +286,24 @@ proc ::web::user::handle {config view handler challenge request context} {
             }
         }
         # Attempt counts commit independently, including unsuccessful checks.
-        if {$challenge || ($view eq "two-factor/setup" && [dict get $fields operation] eq "confirm")} {
+        if {$view eq "email-login/verify"} {
+            # Bound guesses across the challenge's entire lifetime, even across
+            # rate-limit window boundaries. Failed attempts do not roll back.
+            set limit [tag $store [dict get $row id] email-login-attempts]
+            if {[increment_limit $store $limit [dict get $row expires]] > [property $store challenge_limit]} {
+                fail 429 "Too many attempts. Request a new sign-in code."
+            }
+        } elseif {$challenge || ($view eq "two-factor/setup" && [dict get $fields operation] eq "confirm")} {
             throttle $store [list challenge [dict get $row id]] [property $store challenge_limit]
         }
         if {[captcha_required $config $view $context] && ![check_form_captcha $config $view $row $fields]} {
             return [form_response $config $view $token $context \
                 [redisplay_fields $fields {Enter the characters in the new image. The previous answer was missing, incorrect, or expired.}] 400 1]
+        }
+        if {$view eq "email-login"} {
+            set cooldown $store
+            dict set cooldown -config throttle_window [property $store resend_cooldown]
+            throttle $cooldown [list email-login-send [email_key $store [email [dict get $fields email]]]] 1
         }
         db_transaction [dict get $store -connection] {
             set fresh [session $store $token]
@@ -294,7 +313,7 @@ proc ::web::user::handle {config view handler challenge request context} {
         }
         if {[dict get $result token] ne {}} {set token [dict get $result token]}
         deliver_after_commit $config [dict get $result delivery]
-        if {$returnTo ne {} && $view in {login register verify two-factor} &&
+        if {$returnTo ne {} && $view in {login register verify two-factor email-login/verify} &&
             [authenticated $store [session $store $token]] ne {}} {
             return [set_cookie $config [redirect $returnTo] $token]
         }

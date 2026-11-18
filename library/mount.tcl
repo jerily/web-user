@@ -14,7 +14,8 @@ proc ::web::user::mount {router args} {
 }
 proc ::web::user::mount_configured {router config} {
     variable root
-    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} master_template {} templates {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {}} {*}[dict get $config -config]]
+    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} email_login_enabled false master_template {} templates {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {}} {*}[dict get $config -config]]
+    if {![string is boolean -strict [dict get $settings email_login_enabled]]} {error "email_login_enabled must be a boolean"}
     foreach key {prefix deliver} {
         dict set config -$key [dict get $settings $key]
     }
@@ -51,7 +52,7 @@ proc ::web::user::mount_configured {router config} {
     # Check collisions before installing any route.
     foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/resend-verification $prefix/login \
         $prefix/forgot $prefix/reset $prefix/change-password $prefix/close-account $prefix/two-factor $prefix/two-factor/setup \
-        $prefix/two-factor/disable $prefix/logout $prefix/profile $prefix/admin/users $prefix/_assets/admin.css $prefix/google/start $prefix/google/callback $prefix/google/unlink] {
+        $prefix/two-factor/disable $prefix/logout $prefix/profile $prefix/admin/users $prefix/_assets/admin.css $prefix/google/start $prefix/google/callback $prefix/google/unlink $prefix/email-login $prefix/email-login/verify] {
         if {[dict get [$router match GET $path] statusCode] != 404} {error "route already mounted: $path"}
     }
     set config [google_configure $config]
@@ -59,6 +60,10 @@ proc ::web::user::mount_configured {router config} {
         $router add POST $prefix/google/start [list ::web::user::google_start $config] -strict true
         $router add GET $prefix/google/callback [list ::web::user::google_callback $config] -strict true
         $router add POST $prefix/google/unlink [list ::web::user::google_unlink $config] -strict true
+    }
+    if {[dict get $settings email_login_enabled]} {
+        $router add {GET POST} $prefix/email-login [list ::web::user::email_login $config] -strict true
+        $router add {GET POST} $prefix/email-login/verify [list ::web::user::email_login_verify $config] -strict true
     }
     $router add GET $prefix [list ::web::user::account $config] -strict true
     $router add GET $prefix/ [list ::web::user::account $config] -strict true

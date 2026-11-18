@@ -1,0 +1,139 @@
+package require tcltest
+namespace import ::tcltest::*
+if {![llength [info commands ::authtest::setup]]} {source [file join [file dirname [info script]] auth.test]}
+namespace eval ::emaillogintest {}
+proc ::emaillogintest::setup {{policy {}}} {
+    ::authtest::setup LOCAL [dict merge {bcrypt_cost 4} $policy] {email_login_enabled true}
+    ::authtest::register
+    ::authtest::call POST /user/logout
+    set ::authtest::delivered {}
+}
+proc ::emaillogintest::start {{address person@example.com} {query {}} {persistent 0}} {
+    ::authtest::call GET /user/email-login$query
+    set fields [dict create email $address]
+    if {$persistent} {dict set fields stay_signed_in 1}
+    ::authtest::call POST /user/email-login$query $fields
+}
+
+test email-login-1 {browser-bound code rotates once, preserves return destination and persistent opt-in, and records success} -setup ::emaillogintest::setup -body {
+    set store $::authtest::store
+    set before [::web::user::user_by_email $store person@example.com]
+    set result [list [::emaillogintest::start person@example.com ?return_to=%2Fdocs 1]]
+    set code [lindex $::authtest::delivered 2]
+    set cookie $::authtest::cookie; set csrf $::authtest::csrf; set token [::authtest::token]
+    set row [::web::user::session $store $token]
+    lappend result [lindex $::authtest::delivered 0] [regexp {^[0-9]{6}$} $code] \
+        [expr {[dict get $row code_tag] ne $code}] [expr {[::authtest::me] eq {}}]
+    lappend result [::authtest::call POST /user/email-login/verify?return_to=%2Fdocs [dict create code $code]] \
+        [dict get $::authtest::last headers Location] [expr {[::authtest::me] ne {}}] \
+        [string match {*Max-Age=*} [dict get $::authtest::last headers Set-Cookie]]
+    set after [::web::user::user_by_email $store person@example.com]
+    lappend result [expr {[dict get $before password] eq [dict get $after password]}] \
+        [expr {[dict get $after last_email_login_at] > 0}] [expr {[::web::user::session $store $token] eq {}}]
+    set ::authtest::cookie $cookie; set ::authtest::csrf $csrf
+    lappend result [::authtest::call POST /user/email-login/verify [dict create code $code]]
+    set result
+} -cleanup ::authtest::cleanup -result {200 login 1 1 1 302 /docs 1 1 1 1 1 403}
+
+test email-login-2 {unknown, inactive and unverified addresses have the same production response and cannot authenticate} -setup ::emaillogintest::setup -body {
+    # Exercise PROD rendering with the disposable SQL fixture and fake mail transport.
+    dict set ::authtest::store -env PROD
+    $::authtest::router destroy
+    set ::authtest::router [::tpathexp::router]
+    set ::authtest::config [::web::user::mount $::authtest::router -store $::authtest::store \
+        -config {origin https://community.test email_enabled true email_login_enabled true deliver ::authtest::delivery}]
+    set messages {}
+    set statuses {}
+    foreach address {missing@example.com inactive@example.com unverified@example.com person@example.com} {
+        if {$address ni {missing@example.com person@example.com}} {
+            set uid user_[::ksuid::generate_ksuid]
+            ::web::user::insert $::authtest::store web_user_users [dict create id $uid \
+                email_key [::web::user::email_key $::authtest::store $address] \
+                email [::web::user::seal $::authtest::store $address [list email $uid]] \
+                password {} active [expr {$address ne "inactive@example.com"}] verified [expr {$address ne "unverified@example.com"}] \
+                mfa_secret {} last_step -1 revision 0 created_at [clock seconds]]
+        }
+        set ::authtest::cookie {}; set ::authtest::csrf {}; set ::authtest::delivered {}
+        lappend statuses [::emaillogintest::start $address]
+        set html [dict get $::authtest::last body]
+        regexp {<p role="status">([^<]+)</p>} $html -> message
+        lappend messages $message
+        if {[string match {*local-code*} $html]} {error "Production code leak"}
+        if {$address ne "person@example.com" && $::authtest::delivered ne {}} {error "Ineligible address received a code"}
+        if {$address ne "person@example.com"} {
+            lappend statuses [::authtest::call POST /user/email-login/verify {code 123456}]
+        }
+    }
+    list $statuses [llength [lsort -unique $messages]] [lindex $::authtest::delivered 0]
+} -cleanup ::authtest::cleanup -result {{200 400 200 400 200 400 200} 1 login}
+
+test email-login-3 {attempt budget persists after failures and correct codes cannot exceed it} -setup {::emaillogintest::setup {challenge_limit 2}} -body {
+    ::emaillogintest::start
+    set code [lindex $::authtest::delivered 2]
+    set wrong 000000
+    if {$code eq $wrong} {set wrong 111111}
+    set result {}
+    foreach supplied [list $wrong $wrong $code] {lappend result [::authtest::call POST /user/email-login/verify [dict create code $supplied]]}
+    lappend result [expr {[::authtest::me] eq {}}] [dict get [::web::user::user_by_email $::authtest::store person@example.com] last_email_login_at]
+    set result
+} -cleanup ::authtest::cleanup -result {400 400 429 1 0}
+
+test email-login-4 {codes cannot cross browsers or purposes, expire, and require same-origin CSRF} -setup ::emaillogintest::setup -body {
+    ::emaillogintest::start
+    set code [lindex $::authtest::delivered 2]
+    set cookie $::authtest::cookie; set csrf $::authtest::csrf; set token [::authtest::token]
+    set ::authtest::cookie {}; set ::authtest::csrf {}
+    ::authtest::call GET /user/email-login
+    set result [list [::authtest::call POST /user/email-login/verify [dict create code $code]]]
+    set ::authtest::cookie $cookie; set ::authtest::csrf $csrf
+    lappend result [::authtest::call POST /user/email-login/verify [dict create code $code] {Origin https://evil.test}]
+    lappend result [::authtest::call POST /user/reset [dict create code $code password $::authtest::password]]
+    set row [::web::user::session $::authtest::store $token]
+    ::tsession::sql::update [dict get $::authtest::store -sessions] [dict get $row id] {expires 0}
+    lappend result [::authtest::call POST /user/email-login/verify [dict create code $code]] [expr {[::authtest::me] eq {}}]
+    set result
+} -cleanup ::authtest::cleanup -result {400 403 400 403 1}
+
+test email-login-5 {MFA must finish before email-login activity is recorded} -setup ::emaillogintest::setup -body {
+    ::authtest::login
+    set secret [::authtest::setup_mfa]
+    ::authtest::call POST /user/logout
+    # Permit a fresh valid TOTP after fixture enrollment consumed the current step.
+    set user [::web::user::user_by_email $::authtest::store person@example.com]
+    ::web::user::update $::authtest::store web_user_users [dict create id [dict get $user id]] {last_step -1}
+    ::emaillogintest::start person@example.com {} 1
+    set code [lindex $::authtest::delivered 2]
+    set result [list [::authtest::call POST /user/email-login/verify [dict create code $code]] [expr {[::authtest::me] eq {}}] \
+        [dict get [::web::user::user_by_email $::authtest::store person@example.com] last_email_login_at]]
+    lappend result [::authtest::call POST /user/two-factor [dict create code [::tmfa::get_totp $secret 6 30 SHA1]]] \
+        [expr {[::authtest::me] ne {}}] \
+        [expr {[dict get [::web::user::user_by_email $::authtest::store person@example.com] last_email_login_at] > 0}] \
+        [string match {*Max-Age=*} [dict get $::authtest::last headers Set-Cookie]]
+    set result
+} -cleanup ::authtest::cleanup -result {200 1 0 200 1 1 1}
+
+test email-login-6 {request cooldown applies to known and unknown accounts} -setup ::emaillogintest::setup -body {
+    set result {}
+    foreach address {person@example.com missing@example.com} {
+        lappend result [::emaillogintest::start $address] [::emaillogintest::start $address]
+    }
+    set result
+} -cleanup ::authtest::cleanup -result {200 429 200 429}
+
+test email-login-7 {disabled mounts expose neither option nor routes} -setup {::authtest::setup LOCAL {bcrypt_cost 4}} -body {
+    ::authtest::call GET /user/login
+    list [string match {*Email me a one-time code*} [dict get $::authtest::last body]] \
+        [::authtest::call GET /user/email-login] [::authtest::call POST /user/email-login/verify {code 123456}]
+} -cleanup ::authtest::cleanup -result {0 404 404}
+
+test email-login-8 {sign-in email names the purpose, browser binding and expiry; production requires delivery} -setup ::emaillogintest::setup -body {
+    set config $::authtest::config
+    set message [::web::user::email_message $config login person@example.com 123456]
+    dict set config -store -env PROD
+    dict set config -config email_enabled false
+    list [string match {*sign-in code*} [dict get $message subject]] \
+        [string match {*123456*browser*email-login/verify*900 seconds*} [dict get $message text]] \
+        [catch {::web::user::validate_email_config $config} error] $error
+} -cleanup ::authtest::cleanup -result {1 1 1 {Email sign-in needs email_enabled in PROD}}
+
+cleanupTests

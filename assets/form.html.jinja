@@ -1,10 +1,14 @@
 {% extends "page.html.jinja" %}
 {% block body %}
-{% if google_enabled and (view == "login" or view == "register") %}
-<form method="post" action="{{ prefix }}/google/start{{ return_query }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button" type="submit">Continue with Google</button></form>
-{% endif %}
 <section class="account-panel" aria-labelledby="account-title">
 <h1 id="account-title">{{ title }}</h1>
+{% if (google_enabled and (view == "login" or view == "register")) or (email_login_enabled and view == "login") %}
+<div class="account-signin-options" aria-label="Other ways to sign in">
+{% if google_enabled %}<form method="post" action="{{ prefix }}/google/start{{ return_query }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-google" type="submit">Continue with Google</button></form>{% endif %}
+{% if email_login_enabled and view == "login" %}<a class="account-button account-button-email" href="{{ prefix }}/email-login{{ return_query }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 7 8 6 8-6"/></svg>Email me a one-time code</a>{% endif %}
+</div>
+<div class="account-divider"><span>OR</span></div>
+{% endif %}
 {% if message %}<p role="status">{{ message }}</p>{% endif %}
 {% if reload_form %}<p><a href="{{ prefix }}/{{ view }}{{ return_query }}">Reload the form to try again.</a></p>{% endif %}
 {% if debug_code %}<aside class="local-code"><strong>LOCAL development code</strong><code id="local-code">{{ debug_code }}</code></aside>{% endif %}
@@ -29,7 +33,9 @@
 {% else %}
 <form method="post" action="{{ prefix }}/{{ view }}{{ return_query }}">
 <input type="hidden" name="csrf" value="{{ csrf }}">
-{% if view == "register" or view == "login" or view == "forgot" %}
+{% if view == "email-login" %}<p>Enter the email address of your verified account. We’ll send you a one-time sign-in code.</p>{% endif %}
+{% if view == "email-login/verify" %}<p>Enter the six-digit code from your email. Keep this browser open; the code works only here.</p>{% endif %}
+{% if view == "register" or view == "login" or view == "forgot" or view == "email-login" %}
 <label>Email <input name="email" type="email" value="{{ email }}" autocomplete="email" maxlength="254" required></label>
 {% endif %}
 {% if collect_names and (view == "register" or view == "profile") %}
@@ -57,14 +63,14 @@
 {% if view == "login" or (view == "two-factor/disable" and password_enabled) %}
 <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
 {% endif %}
-{% if view == "login" %}
+{% if view == "login" or view == "email-login" %}
 <label class="account-remember">
 <input type="checkbox" name="stay_signed_in" value="1" aria-labelledby="stay-signed-in-label" aria-describedby="stay-signed-in-help"{% if stay_signed_in %} checked{% endif %}>
 <span><strong id="stay-signed-in-label">Stay signed in</strong><span id="stay-signed-in-help" class="account-remember-hint">Keep me signed in on this device.</span></span>
 </label>
 {% endif %}
-{% if view == "verify" or view == "reset" or view == "two-factor" or view == "two-factor/disable" %}
-<label>Code <input name="code"{% if view == "verify" or view == "reset" %} inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6"{% endif %} autocomplete="one-time-code" required></label>
+{% if view == "verify" or view == "reset" or view == "two-factor" or view == "two-factor/disable" or view == "email-login/verify" %}
+<label>Code <input name="code"{% if view == "verify" or view == "reset" or view == "email-login/verify" %} inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6"{% endif %} autocomplete="one-time-code" required></label>
 {% endif %}
 {% if view == "verify" and username_conflict %}
 <label>Choose another username <input name="username" value="{{ username }}" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_]{2,31}" required></label>
@@ -88,8 +94,10 @@
 <p><a href="{{ prefix }}/{{ view }}{{ return_query }}">Try another image</a></p>
 </div>
 {% endif %}
-<button class="account-button{% if view == "close-account" %} account-button-danger{% endif %}" type="submit"{% if reload_form %} disabled{% endif %}>{% if view == "register" %}Create account{% elif view == "login" %}Sign in{% elif view == "forgot" %}Send reset code{% elif view == "reset" or view == "change-password" %}Change password{% elif view == "close-account" %}Close account{% elif view == "verify" %}Verify email{% elif view == "profile" %}Save changes{% else %}Continue{% endif %}</button>
+<button class="account-button{% if view == "close-account" %} account-button-danger{% endif %}" type="submit"{% if reload_form %} disabled{% endif %}>{% if view == "register" %}Create account{% elif view == "login" or view == "email-login/verify" %}Sign in{% elif view == "email-login" %}Email me a code{% elif view == "forgot" %}Send reset code{% elif view == "reset" or view == "change-password" %}Change password{% elif view == "close-account" %}Close account{% elif view == "verify" %}Verify email{% elif view == "profile" %}Save changes{% else %}Continue{% endif %}</button>
 </form>
+{% if view == "email-login/verify" %}<p><a href="{{ prefix }}/email-login{{ return_query }}">Request a new code or use a different email</a></p>{% endif %}
+{% if view == "email-login" or view == "email-login/verify" %}<p><a href="{{ prefix }}/login{{ return_query }}">Back to sign in</a></p>{% endif %}
 {% if view == "close-account" %}<p><a href="{{ prefix }}">Cancel</a></p>{% endif %}
 {% if view == "verify" %}
 {% if verification_emails_enabled %}<form class="account-resend" method="post" action="{{ prefix }}/resend-verification{{ return_query }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-secondary" type="submit">Send a new code</button></form>{% endif %}

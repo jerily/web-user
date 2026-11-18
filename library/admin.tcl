@@ -28,8 +28,9 @@ proc ::web::user::admin_user_rows {store page {sort last_login}} {
     set total [dict get [lindex [dict get [db_execute $connection $count] rows] 0] total]
     set pages [expr {max(1, ($total + 49) / 50)}]
     if {$page > $pages} {fail 404 "Page not found."}
-    set columns {id email email_key username active verified created_at last_login_at last_seen_at}
+    set columns {id email email_key username active verified created_at last_login_at last_seen_at last_email_login_at}
     lappend columns [db_alias [db_ne [db_col mfa_secret] [db_value {} -type text]] mfa_enabled]
+    lappend columns [db_alias [db_ne [db_col password] [db_value {} -type text]] password_enabled]
     set query [db_order_by [db_where [db_select web_user_users -columns $columns] $filter] \
         [db_desc [db_col $column]] [db_desc [db_col id]]]
     set query [db_offset [db_limit $query 50] [expr {($page - 1) * 50}]]
@@ -50,6 +51,15 @@ proc ::web::user::admin_user_fields {store items} {
         [db_and [predicate $store {}] [db_in [db_col email_key] $keys]]]
     foreach row [dict get [db_execute $connection $query] rows] {
         dict lappend memberships [dict get $row email_key] [dict get $row group_name]
+    }
+    set identities {}
+    set query [db_order_by [db_where [db_select web_user_identities -columns {uid provider created_at}] \
+        [db_and [predicate $store {}] [db_in [db_col uid] $ids]]] [db_asc [db_col provider]]]
+    foreach row [dict get [db_execute $connection $query] rows] {
+        set fields [text_fields [dict create provider [string totitle [dict get $row provider]] \
+            linked_datetime [clock format [dict get $row created_at] -gmt 1 -format {%Y-%m-%dT%H:%M:%SZ}] \
+            linked_label [clock format [dict get $row created_at] -gmt 1 -format {%Y-%m-%d %H:%M UTC}]]]
+        dict lappend identities [dict get $row uid] [list M $fields]
     }
     set result {}
     foreach row $items {
@@ -78,7 +88,10 @@ proc ::web::user::admin_user_fields {store items} {
             registered_date [clock format [dict get $row created_at] -gmt 1 -format {%Y-%m-%d}] \
             registered_time [clock format [dict get $row created_at] -gmt 1 -format {%H:%M UTC}]]]
         dict set fields groups [list L [lmap group $groups {list S $group}]]
-        foreach {name column} {last_login last_login_at last_visit last_seen_at} {
+        set linked {}
+        if {[dict exists $identities $uid]} {set linked [dict get $identities $uid]}
+        dict set fields identities [list L $linked]
+        foreach {name column} {last_login last_login_at last_visit last_seen_at last_email_login last_email_login_at} {
             set seconds [dict get $row $column]
             set date {}
             set label {Not recorded}
@@ -95,7 +108,7 @@ proc ::web::user::admin_user_fields {store items} {
             dict set fields ${name}_date [list S $day]
             dict set fields ${name}_time [list S $time]
         }
-        foreach key {active verified mfa_enabled} {dict set fields $key [list BOOL [expr {!![dict get $row $key]}]]}
+        foreach key {active verified mfa_enabled password_enabled} {dict set fields $key [list BOOL [expr {!![dict get $row $key]}]]}
         lappend result [list M $fields]
     }
     return $result
