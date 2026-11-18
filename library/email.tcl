@@ -14,6 +14,10 @@ proc ::web::user::validate_email_config {config} {
         error "email_queue_enabled must be a boolean"
     }
     set store [dict get $config -store]
+    if {[dict exists $settings email_login_enabled] && [dict get $settings email_login_enabled] &&
+        [dict get $store -env] eq "PROD" && ![dict get $settings email_enabled]} {
+        error "Email sign-in needs email_enabled in PROD"
+    }
     if {[dict get $store -env] eq "PROD" && [property $store email_verification_required] &&
         (![dict get $settings email_enabled] || ![property $store verification_emails_enabled])} {
         error "Required email verification needs email_enabled and verification_emails_enabled in PROD"
@@ -55,6 +59,10 @@ proc ::web::user::email_message {config purpose destination code} {
             set subject "Reset your password for $site"
             set text "Your password reset code is: $code\n\nEnter it in the browser where you requested recovery at $account/reset. If you did not request this, ignore this email."
         }
+        login {
+            set subject "Your sign-in code for $site"
+            set text "Your one-time sign-in code is: $code\n\nEnter it in the browser where you requested it at $account/email-login/verify. If you did not request this, ignore this email."
+        }
         password-changed {
             set subject "Your $site password was changed"
             set text "Your account password was changed. Existing sessions and recovery challenges were revoked. Your authenticator settings were preserved."
@@ -72,7 +80,7 @@ proc ::web::user::email_message {config purpose destination code} {
     if {[dict exists $settings issuer] && [dict get $settings issuer] ne {}} {
         set subject "[dict get $settings issuer]: $subject"
     }
-    if {$purpose in {verify reset}} {
+    if {$purpose in {verify reset login}} {
         append text "\n\nThis code expires in [property [dict get $config -store] code_ttl] seconds. Never share it."
     } else {
         append text "\n\nIf you did not make this change, recover your account at $account/forgot and contact the site administrator."
@@ -96,7 +104,7 @@ proc ::web::user::deliver {config purpose destination code} {
         foreach key {from subject text} {dict set fields $key [list S [dict get $message $key]]}
         dict set fields to [list L [lmap address [dict get $message to] {list S $address}]]
         set expires 0
-        if {$purpose in {verify reset}} {
+        if {$purpose in {verify reset login}} {
             set expires [expr {[clock seconds] + [property [dict get $config -store] code_ttl]}]
         }
         set body [::tjson::typed_to_json [list M [dict create version {N 1} \

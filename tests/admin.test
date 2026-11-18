@@ -134,4 +134,24 @@ test admin-5 {directory orders by successful sign-in, visit or registration and 
     }
     set result
 } -cleanup ::admintest::cleanup -result {{older@example.com newer@example.com admin@example.com} {admin@example.com newer@example.com older@example.com} {newer@example.com older@example.com admin@example.com} 1 1 1 1 400 400 400 400}
+test admin-6 {linked identities and successful email sign-ins are batched, escaped and tenant-scoped} -setup ::admintest::setup -body {
+    set admin [::admintest::member admin@example.com]
+    set linked [::admintest::member google@example.com]
+    set email [::admintest::member code@example.com]
+    set store $::admintest::store
+    ::web::user::update $store web_user_users [dict create id $linked] {password {}}
+    ::web::user::update $store web_user_users [dict create id $email] {last_email_login_at 1763208000}
+    ::web::user::insert $store web_user_identities [dict create id IDENTITY-KEY-MUST-NOT-LEAK uid $linked provider google created_at 1763208000]
+    ::web::user::insert $store web_user_identities [dict create id another-key uid $linked provider {<script>alert(1)</script>} created_at 1763208000]
+    dict set store -tenant another-tenant
+    ::web::user::insert $store web_user_identities [dict create id another-key uid $linked provider PRIVATE-PROVIDER created_at 1763208000]
+    ::admintest::grant {admin admin@example.com} {admin users.manage}
+    ::admintest::login $admin
+    set page [::admintest::get]
+    set html [dict get $page body]
+    list [dict get $page statusCode] [string match {*Google linked*} $html] \
+        [regexp -all {Used email code} $html] [string match {*Last email sign-in*2025-11-15*} $html] \
+        [string match -nocase {*&lt;script&gt;alert(1)&lt;/script&gt; linked*} $html] \
+        [regexp {IDENTITY-KEY-MUST-NOT-LEAK|PRIVATE-PROVIDER|<script>} $html]
+} -cleanup ::admintest::cleanup -result {200 1 1 1 1 0}
 cleanupTests

@@ -11,7 +11,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.6.0
+package require web-user 0.6.1
 # Set ENV outside the application. Only exact LOCAL or PROD is accepted.
 set connection [::web::user::connect [dict create \
     sqlite_path ./data/community.sqlite3 \

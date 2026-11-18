@@ -118,7 +118,12 @@ proc ::web::user::action_two_factor {config row fields} {
         return -code error -errorcode {WEB USER 401 TOTP} \
             "That authenticator code is invalid or has already been used. Wait for the next code in your authenticator app, then try again."
     }
-    save_user $store $user [dict create last_step $step last_login_at [clock seconds] last_seen_at [clock seconds]]
+    set now [clock seconds]
+    set changes [dict create last_step $step last_login_at $now last_seen_at $now]
+    if {[dict exists $row email_login_pending] && [dict get $row email_login_pending]} {
+        dict set changes last_email_login_at $now
+    }
+    save_user $store $user $changes
     dict set result token [rotate $store $row auth $uid {} [session_persistent $row]]
     if {[dict exists $row google_verified_at]} {google_mark_session $store [dict get $result token] [dict get $row google_verified_at]}
     dict set result view account

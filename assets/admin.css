@@ -22,6 +22,7 @@
 .user-admin-badge{display:inline-block;padding:.18rem .55rem;border-radius:.35rem;background:#edf0ee;color:#46564b;font-size:.8rem;white-space:nowrap}
 .user-admin-enabled{background:#e0f0e5;color:#205a36}
 .user-admin-groups{display:flex;flex-wrap:wrap;gap:.4rem;min-width:7rem}
+.user-admin-methods{display:flex;flex-direction:column;align-items:flex-start;gap:.4rem;min-width:9rem}
 .user-admin-pagination{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:1.5rem;margin:1.4rem 0;font-size:.9rem}
 .user-admin a:focus-visible,.user-admin-table:focus-visible{outline:3px solid #527c61;outline-offset:4px}
 @media(max-width:640px){.user-admin{margin:1.5rem auto;padding:0 .75rem}.user-admin-heading{align-items:flex-start;flex-direction:column;gap:.75rem}.user-admin td,.user-admin th{padding:.85rem}.user-admin-total{font-size:.9rem}}

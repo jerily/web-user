@@ -23,8 +23,8 @@ proc ::web::user::session_persistent {row} {
 proc ::web::user::new_session {store {kind anon} {uid {}} {code {}} {staySignedIn 0}} {
     set token [random_token]
     set id [tag $store $token session]
-    set ttl [property $store [expr {$kind eq "auth" ? "session_ttl" : ($kind in {verify verify-email reset} ? "code_ttl" : "challenge_ttl")}]]
-    set staySignedIn [expr {$kind in {auth two-factor} && $staySignedIn}]
+    set ttl [property $store [expr {$kind eq "auth" ? "session_ttl" : ($kind in {verify verify-email reset email-login} ? "code_ttl" : "challenge_ttl")}]]
+    set staySignedIn [expr {$kind in {auth two-factor email-login} && $staySignedIn}]
     if {$kind eq "auth" && $staySignedIn} {set ttl [property $store persistent_session_ttl]}
     set codeTag [expr {$code eq {} ? {} : [tag $store $code [list code $id]]}]
     ::tsession::sql::insert [dict get $store -sessions] $id [dict create uid $uid kind $kind \

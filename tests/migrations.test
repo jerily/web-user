@@ -37,11 +37,12 @@ foreach {mode constraint} {LOCAL {} PROD migration_pg} {
             ::web::user::action_verify [dict create -store $store] [::web::user::session $store $token] {code 000123}
         }
         lappend result [dict get [::web::user::user_by_id $store pending] active] \
-            [dict get [::web::user::profile_names $store pending] first_name] [::web::user::session $store $token]
+            [dict get [::web::user::profile_names $store pending] first_name] [::web::user::session $store $token] \
+            [dict get [::web::user::user_by_id $store member] last_email_login_at]
         set result
     } -cleanup {
         ::tpersist::db_disconnect $db
         foreach handle $handles {::tink::unregister_keyset $handle}
-    } -result {1 1 1 1 Mira {}}
+    } -result {1 1 1 1 Mira {} 0}
 }
 cleanupTests

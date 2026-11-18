@@ -35,7 +35,7 @@ proc ::web::user::record_login_failure {config context} {
 # Evaluate the CAPTCHA policy for this form and client IP.
 proc ::web::user::captcha_required {config view context} {
     set store [dict get $config -store]
-    if {$view in {register forgot}} {return [property $store registration_captcha]}
+    if {$view in {register forgot email-login}} {return [property $store registration_captcha]}
     if {$view ne "login"} {return 0}
     set after [property $store login_captcha_after]
     if {$after == 1} {return 1}
