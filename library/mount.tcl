@@ -14,7 +14,7 @@ proc ::web::user::mount {router args} {
 }
 proc ::web::user::mount_configured {router config} {
     variable root
-    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} email_login_enabled false master_template {} templates {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {}} {*}[dict get $config -config]]
+    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} email_login_enabled false master_template {} templates {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {} validate_templates true} {*}[dict get $config -config]]
     if {![string is boolean -strict [dict get $settings email_login_enabled]]} {error "email_login_enabled must be a boolean"}
     foreach key {prefix deliver} {
         dict set config -$key [dict get $settings $key]
@@ -41,12 +41,7 @@ proc ::web::user::mount_configured {router config} {
     dict set config -cookie $name
     dict set config -session-cookie [::tsession::cookie::create -name $name -mac [dict get $store -mac] \
         -secure [expr {[dict get $store -env] eq "PROD"}]]
-    set templates {}
-    foreach filename {page.html.jinja form.html.jinja profile.html.jinja admin-users.html.jinja} {dict set templates $filename [read_text [file join $root assets $filename]]}
-    set templates [dict merge $templates [dict get $settings templates]]
-    if {[dict get $settings master_template] ne {}} {dict set templates page.html.jinja [dict get $settings master_template]}
-    dict for {name text} $templates {::jinja2::validate $text -templates $templates -path $name}
-    dict set config -templates $templates
+    dict set config -templates [prepare_templates $settings]
     dict set config -operations [request_operations $store]
     validate_email_config $config
     # Check collisions before installing any route.
@@ -86,4 +81,23 @@ proc ::web::user::mount_configured {router config} {
     }
     $router add POST $prefix/logout [list ::web::user::logout $config] -strict true
     return $config
+}
+
+# Prepare the exact host/package composition without opening storage or mounting
+# routes. Production hosts may skip validation after checking their artifact.
+proc ::web::user::prepare_templates {{settings {}}} {
+    variable root
+    set settings [dict merge {master_template {} templates {} validate_templates true} $settings]
+    if {![string is boolean -strict [dict get $settings validate_templates]]} {error "validate_templates must be a boolean"}
+    set templates {}
+    foreach filename {page.html.jinja form.html.jinja profile.html.jinja admin-users.html.jinja} {dict set templates $filename [read_text [file join $root assets $filename]]}
+    if {[dict get $settings validate_templates]} {
+        dict for {name text} $templates {::jinja2::validate $text -templates $templates -path $name}
+    }
+    set templates [dict merge $templates [dict get $settings templates]]
+    if {[dict get $settings master_template] ne {}} {dict set templates page.html.jinja [dict get $settings master_template]}
+    if {[dict get $settings validate_templates]} {
+        dict for {name text} $templates {::jinja2::validate $text -templates $templates -path $name}
+    }
+    return $templates
 }

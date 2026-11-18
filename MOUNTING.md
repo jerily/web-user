@@ -484,3 +484,17 @@ account security behavior. Mount owns the handles it registers and `release`
 unregisters them. The lower-level `create` / `-store` API borrows already registered
 handles; it cannot accept these private keyset values at mount. Treat the returned
 mount dictionary and store as private.
+
+## Build-time template validation
+
+`::web::user::prepare_templates settings` returns the same template dictionary used
+by the mount, without opening a database, creating keys, connecting middleware,
+or registering routes. Supply the mount's `master_template` and `templates`
+settings to validate both the package defaults and their composition with the
+host layout during packaging/CI.
+
+Validation defaults to `true`. After validating the exact deployed templates,
+pass `validate_templates false` in the mount's `-config` to skip repeated
+validation in production workers. The template strings are still loaded and
+composed normally; rendering and escaping are unchanged. Development hosts can
+keep the default validation behavior. This option does not cache compiled templates.
