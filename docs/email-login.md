@@ -13,8 +13,11 @@ existing users. No new keys or private configuration values are required.
 The login page offers a link to `$prefix/email-login`. A CSRF-protected POST
 requests a code; `$prefix/email-login/verify` accepts it. Both routes allow GET
 to display their forms. Existing `return_to` validation and “Stay signed in”
-behavior apply. Unknown, inactive and unverified email addresses receive the
-same public response as eligible users. This flow does not create accounts.
+behavior apply. All existing active accounts can use a code, including accounts
+whose email has not been verified (since 0.6.2). A successful code check marks
+the email as verified. Unknown and inactive email addresses receive the same
+public response as eligible users but receive no code. This flow does not create
+accounts.
 
 Codes are generated with the package's secure random generator and stored only
 as keyed verifiers in expiring, browser-bound SQL sessions. Successful use
@@ -24,8 +27,9 @@ remain counted after transaction rollback and across rate-limit windows.
 limits mail requests, and the existing account/IP and registration CAPTCHA
 policies apply. A code from password recovery cannot sign a user in.
 
-Configured MFA must complete before the user is authenticated. Only a completed
-sign-in updates `last_email_login_at`. “Manage users” displays password
+MFA enrollment requires verified email. Users who enabled MFA must complete it
+before they are authenticated. Only a completed sign-in updates
+`last_email_login_at`. “Manage users” displays password
 availability, providers linked in the tenant's identity table, and “Used email
 code” with the last successful timestamp. It never displays codes, identity
 verifiers, password hashes or provider tokens.
