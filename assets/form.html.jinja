@@ -33,7 +33,7 @@
 {% else %}
 <form method="post" action="{{ prefix }}/{{ view }}{{ return_query }}">
 <input type="hidden" name="csrf" value="{{ csrf }}">
-{% if view == "email-login" %}<p>Enter the email address of your verified account. We’ll send you a one-time sign-in code.</p>{% endif %}
+{% if view == "email-login" %}<p>Enter your account’s email address. We’ll send you a one-time sign-in code.</p>{% endif %}
 {% if view == "email-login/verify" %}<p>Enter the six-digit code from your email. Keep this browser open; the code works only here.</p>{% endif %}
 {% if view == "register" or view == "login" or view == "forgot" or view == "email-login" %}
 <label>Email <input name="email" type="email" value="{{ email }}" autocomplete="email" maxlength="254" required></label>

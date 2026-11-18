@@ -118,11 +118,13 @@ per mount and do not modify package defaults. The example loads site and per-pac
 Enable passwordless email sign-in with `-config {email_login_enabled true ...}`.
 It is disabled by default and requires `email_enabled` in PROD. The routes are
 `GET/POST $prefix/email-login` and `GET/POST $prefix/email-login/verify`.
-Only active accounts with verified email can sign in; new visitors register first.
+All active accounts can sign in, including those with unverified email; a valid
+code verifies their email. New visitors register first.
 The six-digit code is bound to the requesting browser, expires after `code_ttl`,
 and is consumed once. `challenge_limit` bounds guesses for its entire lifetime;
 the existing account/IP limits, `resend_cooldown`, and registration CAPTCHA
-policy also apply. MFA remains required. See [Email sign-in](docs/email-login.md).
+policy also apply. MFA remains required for users who enabled it.
+See [Email sign-in](docs/email-login.md).
 
 Before upgrading to 0.6.1, run `::web::user::initdb $connection` to add
 `last_email_login_at` with a zero default. “Manage users” shows linked identity

@@ -7,13 +7,13 @@ proc ::web::user::action_email_login {config row fields} {
     set code [verification_code]
     set uid {}
     set delivery {}
-    if {$user ne {} && [dict get $user active] && [dict get $user verified]} {
+    if {$user ne {} && [dict get $user active]} {
         set uid [dict get $user id]
         set delivery [list login $address $code]
     }
     set persistent [expr {[dict exists $fields stay_signed_in] && [dict get $fields stay_signed_in] eq "1"}]
     return [dict create token [rotate $store $row email-login $uid $code $persistent] \
-        view email-login/verify message {If this email belongs to an active, verified account, a sign-in code is on its way. Enter it below in this browser.} \
+        view email-login/verify message {If this email belongs to an active account, a sign-in code is on its way. Enter it below in this browser.} \
         debug_code $code delivery $delivery]
 }
 
@@ -21,14 +21,15 @@ proc ::web::user::action_email_login_verify {config row fields} {
     set store [dict get $config -store]
     check_code $store $row email-login [dict get $fields code]
     set user [user_by_id $store [dict get $row uid]]
-    if {$user eq {} || ![dict get $user active] || ![dict get $user verified]} {
+    if {$user eq {} || ![dict get $user active]} {
         fail 400 "Invalid or expired code."
     }
     set kind [expr {[dict get $user mfa_secret] eq {} ? "auth" : "two-factor"}]
-    set changes {}
+    # A valid email code proves ownership; an enrolled authenticator is still required.
+    set changes {verified 1}
     if {$kind eq "auth"} {
         set now [clock seconds]
-        set changes [dict create last_login_at $now last_seen_at $now last_email_login_at $now]
+        set changes [dict merge $changes [dict create last_login_at $now last_seen_at $now last_email_login_at $now]]
     }
     save_user $store $user $changes
     set token [rotate $store $row $kind [dict get $user id] {} [session_persistent $row]]

@@ -8,6 +8,14 @@ proc ::emaillogintest::setup {{policy {}}} {
     ::authtest::call POST /user/logout
     set ::authtest::delivered {}
 }
+proc ::emaillogintest::setup_unverified {{policy {}}} {
+    ::authtest::setup LOCAL [dict merge {bcrypt_cost 4 email_verification_required false} $policy] {email_login_enabled true}
+    ::authtest::call GET /user/register
+    if {[::authtest::call POST /user/register [dict create email person@example.com password $::authtest::password]] != 200} {
+        error $::authtest::last
+    }
+    set ::authtest::delivered {}
+}
 proc ::emaillogintest::start {{address person@example.com} {query {}} {persistent 0}} {
     ::authtest::call GET /user/email-login$query
     set fields [dict create email $address]
@@ -35,7 +43,7 @@ test email-login-1 {browser-bound code rotates once, preserves return destinatio
     set result
 } -cleanup ::authtest::cleanup -result {200 login 1 1 1 302 /docs 1 1 1 1 1 403}
 
-test email-login-2 {unknown, inactive and unverified addresses have the same production response and cannot authenticate} -setup ::emaillogintest::setup -body {
+test email-login-2 {production responses do not disclose eligibility; verified and unverified active accounts receive codes} -setup ::emaillogintest::setup -body {
     # Exercise PROD rendering with the disposable SQL fixture and fake mail transport.
     dict set ::authtest::store -env PROD
     $::authtest::router destroy
@@ -59,15 +67,20 @@ test email-login-2 {unknown, inactive and unverified addresses have the same pro
         regexp {<p role="status">([^<]+)</p>} $html -> message
         lappend messages $message
         if {[string match {*local-code*} $html]} {error "Production code leak"}
-        if {$address ne "person@example.com" && $::authtest::delivered ne {}} {error "Ineligible address received a code"}
-        if {$address ne "person@example.com"} {
+        if {$address in {missing@example.com inactive@example.com}} {
+            if {$::authtest::delivered ne {}} {error "Ineligible address received a code"}
             lappend statuses [::authtest::call POST /user/email-login/verify {code 123456}]
+        } else {
+            if {[lrange $::authtest::delivered 0 1] ne [list login $address]} {error "Eligible address did not receive a code"}
+            lappend statuses [::authtest::call POST /user/email-login/verify [dict create code [lindex $::authtest::delivered 2]]] \
+                [dict get [::web::user::user_by_email $::authtest::store $address] verified] \
+                [expr {[::authtest::me] ne {}}]
         }
     }
     list $statuses [llength [lsort -unique $messages]] [lindex $::authtest::delivered 0]
-} -cleanup ::authtest::cleanup -result {{200 400 200 400 200 400 200} 1 login}
+} -cleanup ::authtest::cleanup -result {{200 400 200 400 200 200 1 1 200 200 1 1} 1 login}
 
-test email-login-3 {attempt budget persists after failures and correct codes cannot exceed it} -setup {::emaillogintest::setup {challenge_limit 2}} -body {
+test email-login-3 {exhausted attempt budgets prevent authentication and email verification} -setup {::emaillogintest::setup_unverified {challenge_limit 2}} -body {
     ::emaillogintest::start
     set code [lindex $::authtest::delivered 2]
     set wrong 000000
@@ -75,10 +88,11 @@ test email-login-3 {attempt budget persists after failures and correct codes can
     set result {}
     foreach supplied [list $wrong $wrong $code] {lappend result [::authtest::call POST /user/email-login/verify [dict create code $supplied]]}
     lappend result [expr {[::authtest::me] eq {}}] [dict get [::web::user::user_by_email $::authtest::store person@example.com] last_email_login_at]
+    lappend result [dict get [::web::user::user_by_email $::authtest::store person@example.com] verified]
     set result
-} -cleanup ::authtest::cleanup -result {400 400 429 1 0}
+} -cleanup ::authtest::cleanup -result {400 400 429 1 0 0}
 
-test email-login-4 {codes cannot cross browsers or purposes, expire, and require same-origin CSRF} -setup ::emaillogintest::setup -body {
+test email-login-4 {codes cannot cross browsers or purposes, expire, and require same-origin CSRF} -setup ::emaillogintest::setup_unverified -body {
     ::emaillogintest::start
     set code [lindex $::authtest::delivered 2]
     set cookie $::authtest::cookie; set csrf $::authtest::csrf; set token [::authtest::token]
@@ -91,8 +105,9 @@ test email-login-4 {codes cannot cross browsers or purposes, expire, and require
     set row [::web::user::session $::authtest::store $token]
     ::tsession::sql::update [dict get $::authtest::store -sessions] [dict get $row id] {expires 0}
     lappend result [::authtest::call POST /user/email-login/verify [dict create code $code]] [expr {[::authtest::me] eq {}}]
+    lappend result [dict get [::web::user::user_by_email $::authtest::store person@example.com] verified]
     set result
-} -cleanup ::authtest::cleanup -result {400 403 400 403 1}
+} -cleanup ::authtest::cleanup -result {400 403 400 403 1 0}
 
 test email-login-5 {MFA must finish before email-login activity is recorded} -setup ::emaillogintest::setup -body {
     ::authtest::login
@@ -135,5 +150,39 @@ test email-login-8 {sign-in email names the purpose, browser binding and expiry;
         [string match {*123456*browser*email-login/verify*900 seconds*} [dict get $message text]] \
         [catch {::web::user::validate_email_config $config} error] $error
 } -cleanup ::authtest::cleanup -result {1 1 1 {Email sign-in needs email_enabled in PROD}}
+
+test email-login-9 {a successful code verifies email and signs in without changing the password; MFA enrollment requires that proof} -setup ::emaillogintest::setup_unverified -body {
+    set store $::authtest::store
+    set before [::web::user::user_by_email $store person@example.com]
+    set result [list [dict get $before verified] [::authtest::login] \
+        [::authtest::call POST /user/two-factor/setup [dict create operation begin password $::authtest::password]]]
+    ::authtest::call POST /user/logout
+    lappend result [::emaillogintest::start]
+    set code [lindex $::authtest::delivered 2]
+    lappend result [dict get [::web::user::user_by_email $store person@example.com] verified]
+    set wrong 000000
+    if {$code eq $wrong} {set wrong 111111}
+    lappend result [::authtest::call POST /user/email-login/verify [dict create code $wrong]] \
+        [dict get [::web::user::user_by_email $store person@example.com] verified]
+    lappend result [::authtest::call POST /user/email-login/verify [dict create code $code]] \
+        [expr {[::authtest::me] ne {}}]
+    set after [::web::user::user_by_email $store person@example.com]
+    lappend result [dict get $after verified] [expr {[dict get $before password] eq [dict get $after password]}] \
+        [expr {[dict get $after last_email_login_at] > 0}]
+    lappend result [::authtest::call POST /user/two-factor/setup [dict create operation begin password $::authtest::password]]
+    set result
+} -cleanup ::authtest::cleanup -result {0 200 403 200 0 400 0 200 1 1 1 1 200}
+
+test email-login-10 {disabling an account after sending a code prevents verification and authentication} -setup ::emaillogintest::setup_unverified -body {
+    ::emaillogintest::start
+    set code [lindex $::authtest::delivered 2]
+    set store $::authtest::store
+    set user [::web::user::user_by_email $store person@example.com]
+    ::web::user::save_user $store $user {active 0}
+    set result [list [::authtest::call POST /user/email-login/verify [dict create code $code]] [expr {[::authtest::me] eq {}}]]
+    set user [::web::user::user_by_email $store person@example.com]
+    lappend result [dict get $user verified] [dict get $user last_email_login_at]
+    set result
+} -cleanup ::authtest::cleanup -result {400 1 0 0}
 
 cleanupTests
