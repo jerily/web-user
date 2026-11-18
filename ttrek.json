@@ -1,14 +1,14 @@
 {
   "name": "web-user",
   "license": "MIT",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "iuse": [
     "local"
   ],
   "scripts": {},
   "dependencies": {
     "tcl": ">=9.1.0,<10.0.0",
-    "tpersist": "^0.1.5",
+    "tpersist": "^0.1.6",
     "tpathexp": "^1.1.0",
     "jinja2-tcl": "^0.2.0",
     "tjson": "^1.0.28",

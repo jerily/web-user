@@ -68,7 +68,7 @@ proc ::web::user::mount_configured {router config} {
     }
     foreach route [::web::user::route_specs $prefix $config $settings [dict get $config -store -config]] {
         lassign $route method path handler
-        $router add $method $path $handler -strict true
+        $router add $method $path [list ::web::user::request_dispatch $handler] -strict true
     }
     return $config
 }

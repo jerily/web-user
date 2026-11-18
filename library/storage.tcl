@@ -82,15 +82,18 @@ proc ::web::user::rows {store table {where {}}} {
 proc ::web::user::one {store table where} {lindex [rows $store $table $where] 0}
 # Insert a row with explicit tenant and SQL parameter types.
 proc ::web::user::insert {store table values} {
+    if {$table ne "web_user_limits"} {request_mutating}
     dict set values tenant [dict get $store -tenant]
     db_execute [dict get $store -connection] [db_values [db_insert $table] [typed_values $values] -expressions]
 }
 # Update matching tenant-scoped rows and return the affected count.
 proc ::web::user::update {store table where values} {
+    if {$table ne "web_user_limits"} {request_mutating}
     dict get [db_execute [dict get $store -connection] [db_where [db_values [db_update $table] [typed_values $values] -expressions] [predicate $store $where]]] rowcount
 }
 # Delete matching tenant-scoped rows and return the affected count.
 proc ::web::user::remove {store table where} {
+    if {$table ne "web_user_limits"} {request_mutating}
     dict get [db_execute [dict get $store -connection] [db_where [db_delete $table] [predicate $store $where]]] rowcount
 }
 # Find an account by its tenant-scoped identifier.

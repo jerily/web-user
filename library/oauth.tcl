@@ -109,6 +109,7 @@ proc ::web::user::confirm_credentials {store row user password} {
     }
 }
 proc ::web::user::google_mark_session {store token when} {
+    request_mutating
     set row [session $store $token]
     if {[::tsession::sql::update [dict get $store -sessions] [dict get $row id] [dict create google_verified_at $when]] != 1} {
         fail 409 "Session changed; sign in again."
@@ -196,6 +197,7 @@ proc ::web::user::google_start {config request context params} {
     } on error {message opts} {return [response 400 {Google sign-in could not start. Reload the account page and try again.} text/plain]}
 }
 proc ::web::user::google_callback {config request context params} {
+    request_mutating
     set store [dict get $config -store]
     set token [cookie_token $config $request]
     try {

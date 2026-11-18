@@ -27,6 +27,7 @@ proc ::web::user::action_email_login {config row fields} {
 }
 
 proc ::web::user::email_mark_session {store token when {pending 0}} {
+    request_mutating
     set row [session $store $token]
     if {[::tsession::sql::update [dict get $store -sessions] [dict get $row id] \
         [dict create email_verified_at $when email_login_pending $pending]] != 1} {

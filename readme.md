@@ -298,6 +298,22 @@ step that updates existing identities and their encrypted data and sessions.
 its prepared configuration or a reference resolved by its dispatcher. Account
 routes use display settings and policy to select optional routes at startup.
 
+For a host that authenticates in middleware and again while rendering navigation,
+wrap its complete dispatch in `::web::user::with_request $method { ... }` (from
+the lightweight `web-user::request 1.0` package). GET/HEAD requests reuse session,
+account and profile reads only within that scope. Mounted account routes establish
+a scope automatically when the host has not supplied one. Permissions remain live
+queries; account/profile and grant joins stay inside web-user, and session reads
+stay behind tsession's API. There is no cross-request identity cache.
+
+POST requests use fresh reads. Account/session mutations disable reuse for the
+rest of a request, including after rollback. A host changing account or session
+state directly must call `::web::user::request_invalidate` afterward. Coroutine
+scopes are independent and are discarded on completion or error.
+
+Persistent account throttles use tpersist 0.1.6's `db_increment`; these are rate
+limiting counters, separate from request-monitor statistics.
+
 `::web::user::prepare_mount` accepts the same options as `mount`, without the
 router argument, and prepares resources without registering routes. The normal
 `mount` procedure uses the same route definitions. Keep the returned configuration

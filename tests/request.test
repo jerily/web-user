@@ -1,0 +1,108 @@
+package require tcltest 2
+package require web-user
+namespace import ::tcltest::test
+namespace eval ::requesttest {variable calls 0}
+
+proc ::requesttest::setup {} {
+    set ::env(ENV) LOCAL
+    variable db [::web::user::connect {sqlite_path :memory:}]
+    ::web::user::initdb $db
+    variable handles [list [::tink::register_keyset [::tink::aead::create_keyset AES256_GCM]] \
+        [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]]
+    variable store [::web::user::create -connection $db -config [dict create tenant request-test \
+        aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt request-salt challenge_ttl 1]]
+    variable config [::web::user::prepare_mount -store $store -config {origin http://localhost:8080}]
+    variable uid user_[::ksuid::generate_ksuid]
+    ::web::user::insert $store web_user_users [dict create id $uid active 1 verified 1 \
+        email_key [::web::user::email_key $store member@example.com] \
+        email [::web::user::seal $store member@example.com [list email $uid]] \
+        password unused mfa_secret {} last_step -1 revision 0 created_at 1 last_seen_at [clock seconds]]
+    ::web::user::sync_access $store {admin member@example.com moderator member@example.com} \
+        {admin {monitor.view, forum.edit} moderator forum.edit}
+    variable token [::web::user::new_session $store auth $uid]
+    set response [::web::user::set_cookie $config [::web::user::response 200 ok] $token]
+    variable request [dict create method GET path / headers [dict create Cookie [lindex [split [dict get $response headers Set-Cookie] {;}] 0]]]
+    variable calls 0
+    trace add execution ::tpersist::db_execute enter ::requesttest::count
+}
+proc ::requesttest::count {args} {incr ::requesttest::calls}
+proc ::requesttest::cleanup {} {
+    trace remove execution ::tpersist::db_execute enter ::requesttest::count
+    ::tpersist::db_disconnect $::requesttest::db
+    foreach handle $::requesttest::handles {::tink::unregister_keyset $handle}
+}
+
+test request-read {GET reuses session/user/profile and joins grants across groups in one query} -setup ::requesttest::setup -body {
+    ::web::user::with_request GET {
+        set first [::web::user::current_user $::requesttest::config $::requesttest::request]
+        set second [::web::user::current_user $::requesttest::config $::requesttest::request]
+        ::web::user::authenticated $::requesttest::store [::web::user::session $::requesttest::store $::requesttest::token]
+        ::web::user::profile_names $::requesttest::store $::requesttest::uid
+        set permissions [::web::user::permissions $::requesttest::store $::requesttest::uid]
+        list [dict get $first email] [expr {$first eq $second}] $permissions $::requesttest::calls
+    }
+} -cleanup ::requesttest::cleanup -result {member@example.com 1 {forum.edit monitor.view} 3}
+
+test request-revocation {a later request sees revocation and in-scope mutation disables cached authorization} -setup ::requesttest::setup -body {
+    set first [::web::user::with_request GET {::web::user::current_user $::requesttest::config $::requesttest::request}]
+    set second [::web::user::with_request GET {
+        ::web::user::current_user $::requesttest::config $::requesttest::request
+        ::web::user::revoke $::requesttest::store $::requesttest::uid
+        ::web::user::current_user $::requesttest::config $::requesttest::request
+    }]
+    set third [::web::user::with_request GET {::web::user::current_user $::requesttest::config $::requesttest::request}]
+    list [expr {$first ne {}}] $second $third $::web::user::request_scopes
+} -cleanup ::requesttest::cleanup -result {1 {} {} {}}
+
+test request-rollback {a mutation inside GET disables reuse even after its transaction rolls back} -setup ::requesttest::setup -body {
+    ::web::user::with_request GET {
+        ::web::user::current_user $::requesttest::config $::requesttest::request
+        catch {::tpersist::db_transaction $::requesttest::db {
+            ::web::user::update $::requesttest::store web_user_users [dict create id $::requesttest::uid] {active 0}
+            set inactive [::web::user::current_user $::requesttest::config $::requesttest::request]
+            error rollback
+        }}
+        set active [::web::user::current_user $::requesttest::config $::requesttest::request]
+        list $inactive [expr {[dict get $active id] eq $::requesttest::uid}]
+    }
+} -cleanup ::requesttest::cleanup -result {{} 1}
+
+test request-post {POST always uses fresh reads and ignores forged identity fields} -setup ::requesttest::setup -body {
+    dict set ::requesttest::request web_user {id forged}
+    ::web::user::with_request POST {
+        ::web::user::current_user $::requesttest::config $::requesttest::request
+        set user [::web::user::current_user $::requesttest::config $::requesttest::request]
+        list [expr {[dict get $user id] eq $::requesttest::uid}] $::requesttest::calls
+    }
+} -cleanup ::requesttest::cleanup -result {1 4}
+
+test request-new-expiry {new anonymous sessions avoid a reread but expired snapshots are rechecked} -setup ::requesttest::setup -body {
+    ::web::user::with_request GET {
+        set token [::web::user::new_session $::requesttest::store]
+        set row [::web::user::session $::requesttest::store $token]
+        set before $::requesttest::calls
+        after 1100
+        list [dict get $row kind] $before [::web::user::session $::requesttest::store $token] $::requesttest::calls
+    }
+} -cleanup ::requesttest::cleanup -result {anon 1 {} 2}
+
+test request-isolation {nested scopes, coroutines and exceptions do not retain another request's values} -body {
+    set result [::web::user::with_request GET {
+        ::web::user::request_put key parent
+        set inner [::web::user::with_request GET {::web::user::request_get key value}]
+        coroutine request_other apply {{} {
+            ::web::user::with_request GET {
+                ::web::user::request_put key other
+                yield
+                ::web::user::request_get key value
+                return $value
+            }
+        }}
+        ::web::user::request_get key parent
+        list $inner $parent [request_other]
+    }]
+    catch {::web::user::with_request GET {::web::user::request_put key failed; error failed}}
+    list $result $::web::user::request_scopes
+} -result {{false parent other} {}}
+
+::tcltest::cleanupTests

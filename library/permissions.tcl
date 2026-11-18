@@ -39,13 +39,18 @@ proc ::web::user::groups {store uid} {
 }
 
 proc ::web::user::permissions {store uid} {
-    set result {}
-    foreach group [groups $store $uid] {
-        foreach row [rows $store web_user_group_permissions [dict create group_name $group]] {
-            lappend result [dict get $row permission]
-        }
-    }
-    return [lsort -unique $result]
+    if {$uid eq {}} {return {}}
+    set query [db_join [db_select [db_table web_user_users -as u] -expr {p.permission}] \
+        [db_table web_user_group_members -as m] -expr {u.tenant = m.tenant AND u.email_key = m.email_key}]
+    set query [db_join $query [db_table web_user_group_permissions -as p] \
+        -expr {m.tenant = p.tenant AND m.group_name = p.group_name}]
+    set query [db_where $query [db_and \
+        [db_eq [db_col tenant -table u] [db_value [dict get $store -tenant] -type text]] \
+        [db_eq [db_col id -table u] [db_value $uid -type text]] \
+        [db_eq [db_col active -table u] [db_value 1 -type integer]] \
+        [db_eq [db_col verified -table u] [db_value 1 -type integer]]]]
+    set result [db_execute [dict get $store -connection] [db_distinct $query true]]
+    lsort [lmap row [dict get $result rows] {dict get $row permission}]
 }
 
 proc ::web::user::has_permission {store uid permission} {

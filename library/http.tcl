@@ -38,10 +38,31 @@ proc ::web::user::csrf_token {config token} {tag [dict get $config -store] $toke
 # Public callbacks for hosts and mounted content packages.
 proc ::web::user::current_user {config request {context {}}} {
     set store [dict get $config -store]
-    set user [authenticated $store [session $store [cookie_token $config $request]]]
-    if {$user eq {}} {return {}}
+    set token [cookie_token $config $request]
+    set row [session $store $token]
+    if {$row eq {} || [dict get $row kind] ne "auth"} {return {}}
+    set key [list current_user $store $token]
+    if {[request_get $key user]} {return $user}
+    # Accounts own both these tables. Sessions are resolved through tsession's
+    # API above; do not join against another package's storage schema.
+    set query [db_join [db_select [db_table web_user_users -as u] \
+        -expr {u.*, p.first_name AS profile_first_name, p.last_name AS profile_last_name, p.display_name AS profile_display_name}] \
+        [db_table web_user_profiles -as p] -expr {u.tenant = p.tenant AND u.id = p.id} -type left]
+    set query [db_where $query [db_and \
+        [db_eq [db_col tenant -table u] [db_value [dict get $store -tenant] -type text]] \
+        [db_eq [db_col id -table u] [db_value [dict get $row uid] -type text]] \
+        [db_eq [db_col active -table u] [db_value 1 -type integer]]]]
+    set user [lindex [dict get [db_execute [dict get $store -connection] $query] rows] 0]
+    if {$user eq {}} {return [request_put $key {}]}
+    set profile {}
+    foreach field {first_name last_name display_name} {
+        dict set profile $field [expr {[dict exists $user profile_$field] ? [dict get $user profile_$field] : {}}]
+        dict unset user profile_$field
+    }
+    if {![dict exists $user username]} {dict set user username {}}
+    request_put [list authenticated $store [dict get $row uid]] $user
     record_visit $store $user
-    public_user $store $user
+    request_put $key [public_user $store $user $profile]
 }
 # Allow a host action only for an authenticated account.
 proc ::web::user::authorize {config request context action path} {expr {[current_user $config $request $context] ne {}}}
