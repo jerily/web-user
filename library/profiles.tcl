@@ -39,14 +39,19 @@ proc ::web::user::save_profile {store uid names} {
 
 # Full names are available only through the authenticated account API.
 proc ::web::user::profile_names {store uid} {
-    set names [dict create first_name {} last_name {} display_name {}]
+    if {[request_get [list profile_names $store $uid] names]} {return $names}
     set row [one $store web_user_profiles [dict create id $uid]]
+    profile_decode $store $uid $row
+}
+
+proc ::web::user::profile_decode {store uid row} {
+    set names [dict create first_name {} last_name {} display_name {}]
     if {$row ne {}} {
         foreach key {first_name last_name display_name} {
             if {[dict get $row $key] ne {}} {dict set names $key [unseal $store [dict get $row $key] [list profile $uid $key]]}
         }
     }
-    return $names
+    request_put [list profile_names $store $uid] $names
 }
 
 # Public consumers receive a display name and handle, never email or surname.
