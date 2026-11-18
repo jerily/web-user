@@ -126,6 +126,7 @@ proc ::web::user::action_two_factor {config row fields} {
     save_user $store $user $changes
     dict set result token [rotate $store $row auth $uid {} [session_persistent $row]]
     if {[dict exists $row google_verified_at]} {google_mark_session $store [dict get $result token] [dict get $row google_verified_at]}
+    if {[dict exists $row email_verified_at]} {email_mark_session $store [dict get $result token] [dict get $row email_verified_at]}
     dict set result view account
     return $result
 }
