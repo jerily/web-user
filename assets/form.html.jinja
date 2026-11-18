@@ -1,5 +1,8 @@
 {% extends "page.html.jinja" %}
 {% block body %}
+{% if google_enabled and (view == "login" or view == "register") %}
+<form method="post" action="{{ prefix }}/google/start{{ return_query }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button" type="submit">Continue with Google</button></form>
+{% endif %}
 <section class="account-panel" aria-labelledby="account-title">
 <h1 id="account-title">{{ title }}</h1>
 {% if message %}<p role="status">{{ message }}</p>{% endif %}
@@ -8,7 +11,16 @@
 {% if view == "account" %}
 <p class="account-identity">Signed in as <strong>{{ email }}</strong></p>
 {% if email_verified %}<p class="account-verified">Email verified</p>{% else %}<p>Your email is not verified yet.</p>{% if verification_emails_enabled %}<form method="post" action="{{ prefix }}/resend-verification{{ return_query }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="account-button account-button-secondary" type="submit">Verify email</button></form>{% endif %}{% endif %}
-<p><a href="{{ prefix }}/change-password">Change password</a></p>
+<p><a href="{{ prefix }}/change-password">{% if password_enabled %}Change password{% else %}Set a password{% endif %}</a></p>
+{% if google_enabled %}
+{% if google_linked %}
+<p>Google account linked.</p>
+<form method="post" action="{{ prefix }}/google/start"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="intent" value="reauth"><button class="account-button" type="submit">Confirm Google account</button></form>
+{% if password_enabled %}<form method="post" action="{{ prefix }}/google/unlink"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Current password <input name="password" type="password" autocomplete="current-password" required></label><button class="account-button account-button-secondary" type="submit">Unlink Google</button></form>{% endif %}
+{% else %}
+<form method="post" action="{{ prefix }}/google/start"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="intent" value="link"><label>Current password <input name="password" type="password" autocomplete="current-password" required></label><button class="account-button" type="submit">Link Google account</button></form>
+{% endif %}
+{% endif %}
 {% if can_manage_users %}<p><a href="{{ prefix }}/admin/users">Manage users</a></p>{% endif %}
 {% if collect_profile %}<p>{{ display_name }}{% if username %} · @{{ username }}{% endif %} · <a href="{{ prefix }}/profile">Edit profile</a></p>{% endif %}
 {% if mfa_enabled %}<p>Authenticator enabled.</p><a href="{{ prefix }}/two-factor/disable">Disable authenticator</a>{% elif email_verified %}<p>Add an authenticator app to protect your account.</p><a href="{{ prefix }}/two-factor/setup">Set up authenticator</a>{% endif %}
@@ -29,10 +41,11 @@
 {% if collect_display_name %}<label>Display name (optional) <input name="display_name" value="{{ display_name }}" autocomplete="nickname" maxlength="80"></label><p>Your public name. It does not need to be unique.</p>{% endif %}
 {% if collect_username %}<label>Username <input name="username" value="{{ username }}" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_]{2,31}" required></label><p>A unique public handle. You will still sign in with your email.</p>{% endif %}
 {% endif %}
+{% if not password_enabled and (view == "change-password" or view == "close-account" or view == "two-factor/setup" or view == "two-factor/disable") %}<p>Confirm your Google account from the <a href="{{ prefix }}">account page</a> within five minutes before submitting.</p>{% endif %}
 {% if view == "close-account" %}
 <p>This permanently deletes your account and profile and signs you out on every device. This cannot be undone.</p>
 {% endif %}
-{% if view == "change-password" or view == "close-account" %}
+{% if (view == "change-password" or view == "close-account") and password_enabled %}
 <label>Current password <input name="current_password" type="password" autocomplete="current-password" required></label>
 {% endif %}
 {% if view == "register" or view == "reset" or view == "change-password" %}
@@ -41,7 +54,7 @@
 {% if view == "change-password" %}
 <label>Confirm new password <input name="confirm_password" type="password" autocomplete="new-password" minlength="{{ password_min_length }}" required></label>
 {% endif %}
-{% if view == "login" or view == "two-factor/disable" %}
+{% if view == "login" or (view == "two-factor/disable" and password_enabled) %}
 <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
 {% endif %}
 {% if view == "login" %}
@@ -63,7 +76,7 @@
 <div class="qr">{{ qr | safe }}</div><p>Manual setup key: <code>{{ secret }}</code></p>
 <input name="operation" type="hidden" value="confirm"><label>Authenticator code <input name="code" inputmode="numeric" pattern="[0-9]{{ '{' }}{{ totp_digits }}{{ '}' }}" autocomplete="one-time-code" required></label>
 {% else %}
-<p>Confirm your password to set up an authenticator.</p><input name="operation" type="hidden" value="begin"><label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+<input name="operation" type="hidden" value="begin">{% if password_enabled %}<p>Confirm your password to set up an authenticator.</p><label>Password <input name="password" type="password" autocomplete="current-password" required></label>{% endif %}
 {% endif %}
 {% endif %}
 {% if captcha_png %}

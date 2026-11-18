@@ -50,6 +50,7 @@ proc ::web::user::migrate_user_ids {store} {
                 if {[update $store $table $where $changes] != 1} {error "Account changed during ID migration"}
                 dict incr counts $counter
             }
+            update $store web_user_identities [dict create uid $old] [dict create uid $new]
             set profile [one $store web_user_profiles [dict create id $old]]
             if {$profile ne {}} {
                 set changes [dict create id $new]

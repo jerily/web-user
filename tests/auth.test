@@ -311,7 +311,7 @@ test auth-11 {bcrypt input boundaries and unmodified Tink API} -setup {::authtes
         [catch {::web::user::password_hash "long password with \x00 inside"}] \
         [info commands ::tink::password::*] [info commands ::tink::random_bytes] \
         [info commands ::tink::constant_time_equal] [package provide tink]
-} -cleanup {::authtest::cleanup} -result {1 1 1 0 1 {} {} {} 20240704.0.2}
+} -cleanup {::authtest::cleanup} -result {1 1 1 0 1 {} {} {} 20240704.0.3}
 test auth-12 {invalid password hash fails closed and can be replaced by email recovery} -setup {::authtest::setup} -body {
     ::authtest::register
     set user [lindex [::web::user::rows $::authtest::store web_user_users] 0]

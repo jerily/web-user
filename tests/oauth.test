@@ -1,0 +1,102 @@
+package require tcltest
+namespace import ::tcltest::*
+# auth.test supplies the existing account HTTP fixture.
+if {![llength [info commands ::authtest::setup]]} {source [file join [file dirname [info script]] auth.test]}
+namespace eval ::googletest {variable key; variable nonce; variable subject google-user; variable address google@example.com; variable tamper {}}
+proc ::googletest::transport {method url fields headers} {
+    variable key; variable nonce; variable subject; variable address; variable tamper
+    if {[string match */jwks $url]} {set body [::tink::jwt::export_jwks $key]} else {
+        set now [clock seconds]
+        set claims [dict create iss {S https://accounts.google.com} sub [list S $subject] aud {S fake-client} iat [list N $now] exp [list N [expr {$now+300}]] nonce [list S $nonce] email [list S $address] email_verified {BOOL 1}]
+        if {$tamper eq "nonce"} {dict set claims nonce {S incorrect}}
+        set token [::tink::jwt::sign $key [list M $claims]]
+        set body [::oauth2::core::encode_json [dict create access_token {S fake-access} token_type {S Bearer} expires_in {N 300} \
+            scope {S {openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile}} id_token [list S $token]]]
+    }
+    dict create status 200 headers {cache-control max-age=3600} body [encoding convertto utf-8 $body]
+}
+proc ::googletest::setup {} {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+    $::authtest::router destroy
+    set ::authtest::router [::tpathexp::router]
+    set ::authtest::config [::web::user::mount $::authtest::router -store $::authtest::store \
+        -config {origin https://community.test google_enabled true google_client_id fake-client google_redirect_uri https://community.test/user/google/callback email_enabled true deliver ::authtest::delivery} \
+        -secret_config {google_client_secret fake-secret-never-render}]
+    set client [dict get $::authtest::config -google-client]
+    set configVar [info object namespace $client]::config
+    dict set $configVar -transport ::googletest::transport
+    dict set $configVar -metadata {{"issuer":"https://accounts.google.com","authorization_endpoint":"https://accounts.google.com/auth","token_endpoint":"https://accounts.google.com/token","jwks_uri":"https://accounts.google.com/jwks"}}
+    set ::googletest::key [::tink::register_keyset [::tink::jwt::create_private_keyset RS256_2048_F4]]
+    set ::googletest::subject google-user; set ::googletest::address google@example.com; set ::googletest::tamper {}
+    ::authtest::call GET /user/login
+}
+proc ::googletest::start {{fields {}}} {
+    set status [::authtest::call POST /user/google/start $fields]
+    if {$status != 302} {error "Google start failed: $::authtest::last"}
+    set url [dict get $::authtest::last headers Location]
+    set fields [::oauth2::core::form_decode [lindex [split $url ?] 1]]
+    set ::googletest::nonce [dict get $fields nonce]
+    return /user/google/callback?[::oauth2::core::form_encode [dict create code mock-code state [dict get $fields state]]]
+}
+proc ::googletest::cleanup {} {
+    ::web::user::release $::authtest::config
+    ::tink::unregister_keyset $::googletest::key
+    ::authtest::cleanup
+}
+test google-login {verified Google identity creates a passwordless account and rotates cookie} -setup {::googletest::setup} -body {
+    set before $::authtest::cookie
+    set callback [::googletest::start]
+    set status [::authtest::call GET $callback]
+    set row [::web::user::session $::authtest::store [::authtest::token]]
+    set user [::web::user::require_user $::authtest::store $row]
+    ::authtest::call GET /user
+    list $status [expr {$before ne $::authtest::cookie}] [::web::user::has_password $user] \
+        [::web::user::google_linked $::authtest::store [dict get $user id]] \
+        [string match *fake-secret-never-render* [dict get $::authtest::last body]] \
+        [::authtest::call GET $callback]
+} -cleanup {::googletest::cleanup} -result {302 1 0 1 0 400}
+test google-no-email-link {matching email never links a local account automatically} -setup {::googletest::setup} -body {
+    ::authtest::register
+    set ::googletest::address person@example.com
+    ::authtest::call GET /user/login
+    set status [::authtest::call GET [::googletest::start]]
+    list $status [llength [::web::user::rows $::authtest::store web_user_identities]]
+} -cleanup {::googletest::cleanup} -result {409 0}
+test google-link {linking requires CSRF and current password; unlink keeps password login} -setup {::googletest::setup} -body {
+    ::authtest::register; ::authtest::login
+    set result [list [::authtest::call POST /user/google/start {intent link password wrong}] \
+        [::authtest::call POST /user/google/start {intent link csrf wrong password wrong}]]
+    set callback [::googletest::start [dict create intent link password $::authtest::password]]
+    lappend result [::authtest::call GET $callback]
+    ::authtest::call GET /user
+    lappend result [::authtest::call POST /user/google/unlink [dict create password $::authtest::password]] \
+        [llength [::web::user::rows $::authtest::store web_user_identities]]
+    set result
+} -cleanup {::googletest::cleanup} -result {401 403 302 302 0}
+test google-passwordless {recent provider proof allows setting password but unlink cannot strand account} -setup {::googletest::setup} -body {
+    ::authtest::call GET [::googletest::start]
+    ::authtest::call GET /user
+    set result [list [::authtest::call POST /user/google/unlink {password unused}]]
+    ::authtest::call GET /user/change-password
+    lappend result [::authtest::call POST /user/change-password [dict create password $::authtest::password confirm_password $::authtest::password]]
+    set user [::web::user::user_by_email $::authtest::store google@example.com]
+    lappend result [::web::user::password_ok $::authtest::store $user $::authtest::password]
+    set result
+} -cleanup {::googletest::cleanup} -result {409 200 1}
+test google-mfa {Google login cannot bypass the local authenticator} -setup {::googletest::setup} -body {
+    ::authtest::call GET [::googletest::start]
+    ::authtest::call GET /user/two-factor/setup
+    set begin [::authtest::call POST /user/two-factor/setup {operation begin}]
+    set row [::web::user::session $::authtest::store [::authtest::token]]
+    set secret [::web::user::unseal $::authtest::store [dict get $row pending_secret] [list mfa [dict get $row uid]]]
+    set code [::web::user::totp_code $::authtest::store $secret]
+    set confirmed [::authtest::call POST /user/two-factor/setup [dict create operation confirm code $code]]
+    ::authtest::call POST /user/logout
+    set status [::authtest::call GET [::googletest::start]]
+    set row [::web::user::session $::authtest::store [::authtest::token]]
+    list $begin $confirmed $status [dict get $row kind] [::web::user::authenticated $::authtest::store $row]
+} -cleanup {::googletest::cleanup} -result {200 200 302 two-factor {}}
+test google-invalid-token {nonce mismatch never creates an account} -setup {::googletest::setup} -body {
+    set ::googletest::tamper nonce
+    list [::authtest::call GET [::googletest::start]] [llength [::web::user::rows $::authtest::store web_user_users]]
+} -cleanup {::googletest::cleanup} -result {400 0}

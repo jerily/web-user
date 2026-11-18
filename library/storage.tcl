@@ -39,6 +39,8 @@ proc ::web::user::initdb {connection} {
     ${backend}::initdb $connection
     db_apply_schema $connection [file join $root sql schema.json] -additive true
     migrate_registrations $connection
+    package require pure-tcl-oauth2-core 0.1.0
+    ::oauth2::store::initdb $connection
 }
 # Validate account policy and borrow the host SQL connection.
 proc ::web::user::create {args} {
@@ -52,6 +54,8 @@ proc ::web::user::create {args} {
     dict set config -config $settings
     foreach key {-connection -tenant -aead -mac} {if {[dict get $config $key] eq {}} {error "$key is required"}}
     dict set config -env [environment]
+    set dialect [expr {[dict get $config -env] eq "LOCAL" ? "sqlite" : "postgresql"}]
+    if {[db_dialect [dict get $config -connection]] ne $dialect} {error "session store requires a $dialect connection"}
     set backend [session_backend]
     dict set config -sessions [${backend}::create -connection [dict get $config -connection] -tenant [dict get $config -tenant]]
     # Validate both key handles before accepting any requests.

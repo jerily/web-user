@@ -97,4 +97,16 @@ test user-ids-3-$mode {unreadable ciphertext rolls back every change, including 
         [dict get [::web::user::profile_names $store $first] first_name]
 } -cleanup ::authtest::cleanup -result {1 1 1 Mira}
 }
+test user-ids-google {identity links follow an explicitly migrated account ID} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    set store $::authtest::store
+    set old [::ksuid::generate_ksuid]
+    ::idtest::seed $store $old google-linked@example.com
+    set id [::web::user::google_identity $store provider-subject]
+    ::web::user::insert $store web_user_identities [dict create id $id uid $old provider google created_at 1]
+    ::web::user::migrate_user_ids $store
+    expr {[dict get [::web::user::one $store web_user_identities [dict create id $id]] uid] eq "user_$old"}
+} -cleanup ::authtest::cleanup -result 1
+
 cleanupTests

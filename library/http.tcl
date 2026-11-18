@@ -177,6 +177,9 @@ proc ::web::user::render {config view token {extra {}}} {
     dict set context signed_in [list BOOL [expr {$user ne {}}]]
     dict set context can_manage_users [list BOOL [expr {$user ne {} && [has_permission $store [dict get $user id] users.manage]}]]
     dict set context admin_view {BOOL 0}
+    dict set context google_enabled [list BOOL [dict get $config -config google_enabled]]
+    dict set context password_enabled [list BOOL [expr {$user eq {} || [has_password $user]}]]
+    dict set context google_linked [list BOOL [expr {$user ne {} && [google_linked $store [dict get $user id]]}]]
     set templates [dict get $config -templates]
     response 200 [::jinja2::render [dict get $templates form.html.jinja] \
         [::tjson::typed_to_json [list M $context]] -templates $templates -path form.html.jinja]
@@ -255,7 +258,12 @@ proc ::web::user::handle {config view handler challenge request context} {
         }
         set fields [form $request [property $store form_max_bytes]]
         if {$row eq {} || ![dict exists $fields csrf] || ![csrf $config verify $request $context [dict get $fields csrf]]} {fail 403 "Invalid CSRF token. Reload the form."}
-        validate_form $request $fields [dict get $config -operations $view]
+        set operation [dict get $config -operations $view]
+        set current [authenticated $store $row]
+        if {$current ne {} && ![has_password $current] && $view in {change-password close-account two-factor/setup two-factor/disable}} {
+            set operation [passwordless_operation $operation $view]
+        }
+        validate_form $request $fields $operation
         throttle $store [list post [peer $context]] [property $store post_limit]
         if {[dict exists $fields email]} {throttle $store [list $view [email [dict get $fields email]]] [property $store account_limit]}
         if {[dict get $row uid] ne {}} {throttle $store [list $view [dict get $row uid]] [property $store account_limit]}

@@ -6,9 +6,15 @@
 
 # Validate configuration and mount the account routes and templates.
 proc ::web::user::mount {router args} {
+    set config [mount_store [options {-store {} -connection {} -policy {} -config {} -secret_config {}} {*}$args]]
+    try {mount_configured $router $config} on error {message opts} {
+        release $config
+        return -options $opts $message
+    }
+}
+proc ::web::user::mount_configured {router config} {
     variable root
-    set config [options {-store {} -config {}} {*}$args]
-    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} master_template {} templates {} title Account issuer {} origin {} properties {} assets_url {}} {*}[dict get $config -config]]
+    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} master_template {} templates {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {}} {*}[dict get $config -config]]
     foreach key {prefix deliver} {
         dict set config -$key [dict get $settings $key]
     }
@@ -45,8 +51,14 @@ proc ::web::user::mount {router args} {
     # Check collisions before installing any route.
     foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/resend-verification $prefix/login \
         $prefix/forgot $prefix/reset $prefix/change-password $prefix/close-account $prefix/two-factor $prefix/two-factor/setup \
-        $prefix/two-factor/disable $prefix/logout $prefix/profile $prefix/admin/users $prefix/_assets/admin.css] {
+        $prefix/two-factor/disable $prefix/logout $prefix/profile $prefix/admin/users $prefix/_assets/admin.css $prefix/google/start $prefix/google/callback $prefix/google/unlink] {
         if {[dict get [$router match GET $path] statusCode] != 404} {error "route already mounted: $path"}
+    }
+    set config [google_configure $config]
+    if {[dict get $config -config google_enabled]} {
+        $router add POST $prefix/google/start [list ::web::user::google_start $config] -strict true
+        $router add GET $prefix/google/callback [list ::web::user::google_callback $config] -strict true
+        $router add POST $prefix/google/unlink [list ::web::user::google_unlink $config] -strict true
     }
     $router add GET $prefix [list ::web::user::account $config] -strict true
     $router add GET $prefix/ [list ::web::user::account $config] -strict true
