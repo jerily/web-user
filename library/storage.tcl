@@ -13,29 +13,17 @@ proc ::web::user::options {defaults args} {
     }
     return $defaults
 }
-# Require an explicit supported deployment environment.
-proc ::web::user::environment {} {
-    if {![info exists ::env(ENV)] || $::env(ENV) ni {LOCAL PROD}} {error "ENV must be LOCAL or PROD"}
-    return $::env(ENV)
+proc ::web::user::configured_dialect {config} {
+    return [dict get $config db_dialect]
 }
-# The host owns and closes one connection per worker. Never fall back in PROD.
+# The host owns and closes one connection per worker.
 proc ::web::user::connect {config} {
-    set config [options {sqlite_path {} postgresql {}} {*}$config]
-    if {[environment] eq "LOCAL"} {
-        if {[dict get $config sqlite_path] eq {}} {error "sqlite_path is required"}
-        return [db_connect -dialect sqlite -database [dict get $config sqlite_path] -autobegin 0]
-    }
-    if {[dict get $config postgresql] eq {}} {error "postgresql connection options are required in PROD"}
-    set pg [dict get $config postgresql]
-    foreach {key value} $pg {
-        if {$key ni {-host -port -database -user -password -sslmode -timeout -encoding}} {error "unsupported PostgreSQL option: $key"}
-    }
-    db_connect -dialect postgresql -autobegin 0 {*}$pg
+    return [::tpersist::db_connect_config $config]
 }
 # Initialize the selected session store and account schema.
-proc ::web::user::initdb {connection} {
+proc ::web::user::initdb {connection config} {
     variable root
-    set backend [session_backend]
+    set backend [session_backend $config]
     ${backend}::initdb $connection
     db_apply_schema $connection [file join $root sql schema.json] -additive true
     migrate_registrations $connection
@@ -53,10 +41,7 @@ proc ::web::user::create {args} {
     if {[string trim [dict get $settings email_hash_salt]] eq {}} {error "email_hash_salt is required"}
     dict set config -config $settings
     foreach key {-connection -tenant -aead -mac} {if {[dict get $config $key] eq {}} {error "$key is required"}}
-    dict set config -env [environment]
-    set dialect [expr {[dict get $config -env] eq "LOCAL" ? "sqlite" : "postgresql"}]
-    if {[db_dialect [dict get $config -connection]] ne $dialect} {error "session store requires a $dialect connection"}
-    set backend [session_backend]
+    set backend [session_backend $settings]
     dict set config -sessions [${backend}::create -connection [dict get $config -connection] -tenant [dict get $config -tenant]]
     # Validate both key handles before accepting any requests.
     set probe [seal $config probe check]

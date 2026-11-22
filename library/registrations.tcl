@@ -66,7 +66,7 @@ proc ::web::user::action_register {config row fields} {
     set emailKey [email_key $store $address]
     set required [property $store email_verification_required]
     set send [expr {[property $store verification_emails_enabled] &&
-        ([dict get $config -config email_enabled] || [dict get $store -env] eq "LOCAL")}]
+        ([dict get $config -config email_enabled] || [property $store show_verification_codes])}]
     set result [dict create message {} debug_code {} delivery {} token {} view login]
     set uid {}
     set code [verification_code]
@@ -102,6 +102,11 @@ proc ::web::user::action_register {config row fields} {
     return $result
 }
 
+proc ::web::user::verification_signs_in {config} {
+    set settings [dict get $config -config]
+    expr {[dict get $settings email_login_enabled] && [dict get $settings login_after_email_verification]}
+}
+
 # Confirm exactly one registration, or mark an existing active account's email verified.
 proc ::web::user::action_verify {config row fields} {
     set store [dict get $config -store]
@@ -116,14 +121,18 @@ proc ::web::user::action_verify {config row fields} {
             dict set pending username [username_field $store $fields]
         }
         activate_registration $store $pending 1
-        set token [new_session $store]
-    } else {
+        # Activation revoked every pending session for this registration.
+        set row {}
+    }
+    if {[verification_signs_in $config]} {
+        return [sign_in_with_verified_email $store $row [user_by_id $store $uid]]
+    }
+    if {$kind eq "verify-email"} {
         set user [user_by_id $store $uid]
         if {$user eq {} || ![dict get $user active]} {fail 400 "Invalid or expired code."}
         save_user $store $user {verified 1}
-        set token [rotate $store $row anon]
     }
-    dict create token $token view login message {Email verified. You can now sign in.} debug_code {} delivery {}
+    dict create token [rotate $store $row anon] view login message {Email verified. You can now sign in.} debug_code {} delivery {}
 }
 
 # Replace only this browser's verification code, preserving its chosen credentials.

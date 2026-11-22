@@ -58,6 +58,11 @@ proc ::web::user::action_email_login_verify {config row fields} {
             }
         }
     }
+    return [sign_in_with_verified_email $store $row $user]
+}
+
+# A verified email challenge satisfies the first factor for either email flow.
+proc ::web::user::sign_in_with_verified_email {store row user} {
     if {$user eq {} || ![dict get $user active]} {
         fail 400 "Invalid or expired code."
     }

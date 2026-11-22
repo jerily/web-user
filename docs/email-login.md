@@ -1,12 +1,14 @@
 # Email-code sign-in
 
 Version 0.6.1 adds optional sign-in with a six-digit code. Enable
-`email_login_enabled true` in the mount's `-config`. In PROD, `email_enabled`
-must also be true and the existing delivery callback, SES or SQS settings must
-be configured. The delivery callback receives purpose `login`, the destination
-and the code. Queue messages expire with the code.
+`email_login_enabled true` in the mount's `-config`. With `require_email_delivery`, `email_enabled`
+and `aws_email_enabled` must also be true. Configure SES or an SQS queue and its worker. Queued sign-in codes expire with the challenge.
 
-Run `::web::user::initdb $connection` before serving the new version. Its additive
+Password registration has a separate mount option, `login_after_email_verification`
+(default `false`). When both flags are true, confirming the registration code
+signs the user in and resumes their requested page after any required MFA.
+
+Run `::web::user::initdb $connection $policy` before serving the new version. Its additive
 migration adds `web_user_users.last_email_login_at`, defaulting to zero for
 existing users. No new keys or private configuration values are required.
 
@@ -42,6 +44,6 @@ availability, providers linked in the tenant's identity table, and “Used email
 code” with the last successful timestamp. It never displays codes, identity
 verifiers, password hashes or provider tokens.
 
-LOCAL displays a development code for testing and does not call SES/SQS. PROD
+Set `show_verification_codes=true` for a development code and `aws_email_enabled=false` to disable SES/SQS. PROD
 never displays the code. A failed delivery keeps the generic response; the user
 can request another code after the cooldown.

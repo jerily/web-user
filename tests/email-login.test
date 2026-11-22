@@ -46,11 +46,11 @@ test email-login-1 {browser-bound code rotates once, preserves return destinatio
 
 test email-login-2 {production responses do not disclose eligibility; new addresses and active accounts receive codes} -setup ::emaillogintest::setup -body {
     # Exercise PROD rendering with the disposable SQL fixture and fake mail transport.
-    dict set ::authtest::store -env PROD
+    dict set ::authtest::store -config [dict merge [dict get $::authtest::store -config] {secure_cookies true require_https_origin true allow_oauth_http false allow_loopback_origin false show_verification_codes false require_email_delivery true aws_email_enabled true}]
     $::authtest::router destroy
     set ::authtest::router [::tpathexp::router]
     set ::authtest::config [::web::user::mount $::authtest::router -store $::authtest::store \
-        -config {origin https://community.test email_enabled true email_login_enabled true deliver ::authtest::delivery}]
+        -config {origin https://community.test email_enabled true email_login_enabled true email_region us-east-1 email_from accounts@example.test}]
     set messages {}
     set statuses {}
     foreach address {missing@example.com inactive@example.com unverified@example.com person@example.com} {
@@ -145,12 +145,12 @@ test email-login-7 {disabled mounts expose neither option nor routes} -setup {::
 test email-login-8 {sign-in email names the purpose, browser binding and expiry; production requires delivery} -setup ::emaillogintest::setup -body {
     set config $::authtest::config
     set message [::web::user::email_message $config login person@example.com 123456]
-    dict set config -store -env PROD
+    dict set config -store -config require_email_delivery true
     dict set config -config email_enabled false
     list [string match {*sign-in code*} [dict get $message subject]] \
         [string match {*123456*browser*email-login/verify*900 seconds*} [dict get $message text]] \
         [catch {::web::user::validate_email_config $config} error] $error
-} -cleanup ::authtest::cleanup -result {1 1 1 {Email sign-in needs email_enabled in PROD}}
+} -cleanup ::authtest::cleanup -result {1 1 1 {Email sign-in needs email_enabled when require_email_delivery is enabled}}
 
 test email-login-9 {a successful code verifies email and signs in without changing the password; MFA enrollment requires that proof} -setup ::emaillogintest::setup_unverified -body {
     set store $::authtest::store

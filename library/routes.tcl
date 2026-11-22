@@ -45,4 +45,4 @@ proc ::web::user::route_specs {prefix config {settings {}} {policy {}}} {
     lappend routes [list POST $prefix/logout [list ::web::user::logout $config]]
     return $routes
 }
-package provide web-user::routes 1.0
+package provide web-user::routes 1.0.1

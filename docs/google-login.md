@@ -21,8 +21,7 @@ template data or logs. The returned mount dictionary and route callbacks contain
 private configuration and must remain internal to the host. Public Google options
 are `google_enabled` (default false), `google_client_id` and `google_redirect_uri`.
 Blank enablement is treated as disabled. The callback must exactly equal the
-configured origin plus mount prefix plus `/google/callback`. LOCAL permits
-loopback HTTP; PROD requires HTTPS. Disabling Google hides the buttons and routes,
+configured origin plus mount prefix plus `/google/callback`. Set `allow_oauth_http=true` to permit development HTTP callbacks. Disabling Google hides the buttons and routes,
 without deleting stored identity links.
 
 The login and registration pages offer Google. POST `/google/start` checks the

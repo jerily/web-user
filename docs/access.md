@@ -18,7 +18,7 @@ These are ordinary INI sections. Each value is a comma-separated string. After
 `tconfig` reads the file, pass the two dictionaries to:
 
 ```tcl
-::web::user::initdb $connection
+::web::user::initdb $connection $policy
 ::web::user::sync_access $store [dict get $config groups] [dict get $config permissions]
 ```
 

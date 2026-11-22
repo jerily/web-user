@@ -15,24 +15,30 @@ proc ::web::user::validate_email_config {config} {
     }
     set store [dict get $config -store]
     if {[dict exists $settings email_login_enabled] && [dict get $settings email_login_enabled] &&
-        [dict get $store -env] eq "PROD" && ![dict get $settings email_enabled]} {
-        error "Email sign-in needs email_enabled in PROD"
+        [property $store require_email_delivery] && ![dict get $settings email_enabled]} {
+        error "Email sign-in needs email_enabled when require_email_delivery is enabled"
     }
-    if {[dict get $store -env] eq "PROD" && [property $store email_verification_required] &&
+    if {[property $store require_email_delivery] && [property $store email_verification_required] &&
         (![dict get $settings email_enabled] || ![property $store verification_emails_enabled])} {
-        error "Required email verification needs email_enabled and verification_emails_enabled in PROD"
+        error "Required email verification needs email_enabled and verification_emails_enabled when require_email_delivery is enabled"
     }
-    if {![dict get $settings email_enabled] || [dict get $config -deliver] ne {} ||
-        [dict get $config -store -env] ne "PROD"} {return}
-    if {[dict get $settings email_from] eq {}} {error "email_from is required when PROD email is enabled"}
+    if {[property $store require_email_delivery] && [dict get $settings email_enabled] &&
+        ![property $store aws_email_enabled] &&
+        ([property $store email_verification_required] ||
+         ([dict exists $settings email_login_enabled] && [dict get $settings email_login_enabled]))} {
+        error "Required account email needs aws_email_enabled"
+    }
+    if {![dict get $settings email_enabled] ||
+        ![property [dict get $config -store] aws_email_enabled]} {return}
+    if {[dict get $settings email_from] eq {}} {error "email_from is required for AWS email delivery"}
     email [dict get $settings email_from]
     if {![regexp {^[a-z][a-z0-9-]+-[0-9]+$} [dict get $settings email_region]]} {
-        error "email_region must be an AWS region when PROD email is enabled"
+        error "email_region must be an AWS region for AWS email delivery"
     }
     if {[dict exists $settings email_queue_enabled] && [dict get $settings email_queue_enabled]} {
         if {![dict exists $settings email_queue_url] ||
             ![regexp {^https://[A-Za-z0-9.-]+/[0-9]{12}/[A-Za-z0-9_-]{1,80}$} [dict get $settings email_queue_url]]} {
-            error "email_queue_url must be the HTTPS URL of a standard SQS queue, not its name or ARN"
+            error "email_queue_url must be the HTTPS URL of a standard SQS queue"
         }
         package require pure-tcl-aws-sqs 1.0.0
     } else {
@@ -88,15 +94,11 @@ proc ::web::user::email_message {config purpose destination code} {
     return [dict create from [dict get $settings email_from] to [list $destination] subject $subject text $text]
 }
 
-# Send enabled account messages using the host transport, SQS, or SES.
+# Send enabled account messages using SQS or direct SES.
 proc ::web::user::deliver {config purpose destination code} {
     if {![dict get $config -config email_enabled]} {return}
     if {$purpose eq "verify" && ![property [dict get $config -store] verification_emails_enabled]} {return}
-    if {[dict get $config -deliver] ne {}} {
-        {*}[dict get $config -deliver] $purpose $destination $code
-        return
-    }
-    if {[dict get $config -store -env] ne "PROD"} {return}
+    if {![property [dict get $config -store] aws_email_enabled]} {return}
     set message [email_message $config $purpose $destination $code]
     set settings [dict get $config -config]
     if {[dict exists $settings email_queue_enabled] && [dict get $settings email_queue_enabled]} {
@@ -121,7 +123,7 @@ proc ::web::user::deliver {config purpose destination code} {
         }
         return
     }
-    set client [::aws::ses::create [dict create region [dict get $config -config email_region]]]
+    set client [::aws::ses::create [dict create region [dict get $settings email_region]]]
     try {$client send_email $message} finally {$client destroy}
 }
 

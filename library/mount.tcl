@@ -14,16 +14,16 @@ proc ::web::user::mount {router args} {
 }
 proc ::web::user::prepare_configured {config} {
     variable root
-    set settings [options {prefix /user deliver {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} email_login_enabled false master_template {} templates {} template_renderer {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {} validate_templates true} {*}[dict get $config -config]]
-    if {![string is boolean -strict [dict get $settings email_login_enabled]]} {error "email_login_enabled must be a boolean"}
-    foreach key {prefix deliver} {
-        dict set config -$key [dict get $settings $key]
+    set settings [options {prefix /user verified_identity_callback {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} email_login_enabled false login_after_email_verification false master_template {} templates {} template_renderer {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {} validate_templates true} {*}[dict get $config -config]]
+    foreach key {email_login_enabled login_after_email_verification} {
+        if {![string is boolean -strict [dict get $settings $key]]} {error "$key must be a boolean"}
     }
+    dict set config -prefix [dict get $settings prefix]
     set store [dict get $config -store]
     if {$store eq {}} {error "-store is required"}
     set origin [dict get $settings origin]
-    if {![regexp {^https?://[A-Za-z0-9.:-]+$} $origin] || ([dict get $store -env] eq "PROD" && ![string match https://* $origin])} {
-        error "origin must be the site's exact origin (HTTPS in PROD)"
+    if {![regexp {^https?://[A-Za-z0-9.:-]+$} $origin] || ([property $store require_https_origin] && ![string match https://* $origin])} {
+        error "origin must be the site's exact origin (HTTPS when require_https_origin is enabled)"
     }
     set prefix [string trimright [dict get $config -prefix] /]
     if {![regexp {^(/[A-Za-z0-9_-]+)+$} $prefix]} {error "mount prefix must be a non-root local path"}
@@ -37,10 +37,10 @@ proc ::web::user::prepare_configured {config} {
         error "issuer cannot contain colons or control characters"
     }
     set name web_user_[string range [tag $store $prefix cookie] end-23 end]
-    if {[dict get $store -env] eq "PROD"} {set name __Host-$name}
+    if {[property $store secure_cookies]} {set name __Host-$name}
     dict set config -cookie $name
     dict set config -session-cookie [::tsession::cookie::create -name $name -mac [dict get $store -mac] \
-        -secure [expr {[dict get $store -env] eq "PROD"}]]
+        -secure [property $store secure_cookies]]
     if {[dict get $settings template_renderer] eq {}} {
         dict set config -templates [prepare_templates $settings]
     }

@@ -20,7 +20,7 @@ proc ::googletest::setup {{settings {}}} {
     $::authtest::router destroy
     set ::authtest::router [::tpathexp::router]
     set ::authtest::config [::web::user::mount $::authtest::router -store $::authtest::store \
-        -config [dict merge {origin https://community.test google_enabled true google_client_id fake-client google_redirect_uri https://community.test/user/google/callback email_enabled true deliver ::authtest::delivery} $settings] \
+        -config [dict merge {origin https://community.test google_enabled true google_client_id fake-client google_redirect_uri https://community.test/user/google/callback email_enabled true email_region us-east-1 email_from accounts@example.test} $settings] \
         -secret_config {google_client_secret fake-secret-never-render}]
     set client [dict get $::authtest::config -google-client]
     set configVar [info object namespace $client]::config
