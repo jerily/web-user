@@ -13,9 +13,6 @@ proc ::web::user::options {defaults args} {
     }
     return $defaults
 }
-proc ::web::user::configured_dialect {config} {
-    return [dict get $config db_dialect]
-}
 # The host owns and closes one connection per worker.
 proc ::web::user::connect {config} {
     return [::tpersist::db_connect_config $config]
@@ -23,8 +20,7 @@ proc ::web::user::connect {config} {
 # Initialize the selected session store and account schema.
 proc ::web::user::initdb {connection config} {
     variable root
-    set backend [session_backend $config]
-    ${backend}::initdb $connection
+    ::tsession::initdb $connection $config
     db_apply_schema $connection [file join $root sql schema.json] -additive true
     migrate_registrations $connection
     package require pure-tcl-oauth2-core 0.1.0
@@ -41,8 +37,7 @@ proc ::web::user::create {args} {
     if {[string trim [dict get $settings email_hash_salt]] eq {}} {error "email_hash_salt is required"}
     dict set config -config $settings
     foreach key {-connection -tenant -aead -mac} {if {[dict get $config $key] eq {}} {error "$key is required"}}
-    set backend [session_backend $settings]
-    dict set config -sessions [${backend}::create -connection [dict get $config -connection] -tenant [dict get $config -tenant]]
+    dict set config -sessions [::tsession::create $settings -connection [dict get $config -connection] -tenant [dict get $config -tenant]]
     # Validate both key handles before accepting any requests.
     set probe [seal $config probe check]
     if {[unseal $config $probe check] ne "probe"} {error "invalid encryption key"}

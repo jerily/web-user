@@ -11,7 +11,8 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.7.0
+package require web-user 0.7.4
+package require tsession-postgres 1.0.2
 set policy [dict create db_dialect postgres]
 set connection [::web::user::connect [dict replace $policy \
     postgresql [dict create -host db -database community -user community]]]
@@ -31,6 +32,7 @@ removing its routes and before closing the connection.
 per site (for example, `openssl rand -hex 32`), keep it in private configuration,
 and reuse it across workers and restarts. There is no default salt.
 `::web::user::connect` passes its connection dictionary to `::tpersist::db_connect_config`.
+Install the matching session adapter in the host application (`tsession-sqlite` or `tsession-postgres`).
 Set `db_dialect` to `sqlite` or `postgres` in the host configuration. Pass it to
 `connect`, `initdb`, and the account store policy. A borrowed connection must
 use that dialect and autocommit mode (`-autobegin 0`). Schema changes never happen in `mount` or request handlers.

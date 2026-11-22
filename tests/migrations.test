@@ -15,8 +15,7 @@ foreach {mode constraint} {LOCAL {} PROD migration_pg} {
         set db [::tpersist::db_connect {*}$options]
         ::tpersist::db_apply_schema $db [file join [file dirname [info script]] sql legacy-users.json]
         set policy [dict create db_dialect [expr {$mode eq "LOCAL" ? "sqlite" : "postgres"}]]
-        set backend [::web::user::session_backend $policy]
-        ${backend}::initdb $db
+        ::tsession::initdb $db $policy
         set handles [list [::tink::register_keyset [::tink::aead::create_keyset AES256_GCM]] [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]]
         set store [::web::user::create -connection $db -config [dict replace $policy tenant migration aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt test-salt login_captcha_after 0]]
     } -body {

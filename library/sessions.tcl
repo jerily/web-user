@@ -4,12 +4,6 @@
 # SPDX-License-Identifier: MIT.
 #
 
-# Load the session adapter selected by the host.
-proc ::web::user::session_backend {config} {
-    set backend [configured_dialect $config]
-    package require tsession-$backend 1.0.1
-    return ::tsession::$backend
-}
 # Resolve a browser token to a live SQL session.
 proc ::web::user::session {store token} {
     if {![regexp {^[a-f0-9]{64}$} $token]} {return {}}
