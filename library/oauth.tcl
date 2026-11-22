@@ -51,7 +51,7 @@ proc ::web::user::google_configure {config} {
     try {
         set client [::oauth2::client::create -provider google -client_id [dict get $settings google_client_id] \
             -client_secret [dict get $secret google_client_secret] -redirect_uri [dict get $settings google_redirect_uri] \
-            -transaction_store $transactions -aead [dict get $store -aead] -allow_http [expr {[dict get $store -env] eq "LOCAL"}]]
+            -transaction_store $transactions -aead [dict get $store -aead] -allow_http [property $store allow_oauth_http]]
     } on error {message opts} {$transactions destroy; return -options $opts $message}
     dict set config -google-client $client
     dict set config -google-store $transactions
@@ -219,6 +219,7 @@ proc ::web::user::google_callback {config request context params} {
                 if {[dict get $user revision] != [dict get $flow data revision]} {fail 409 "Account changed. Start linking again."}
             }
             set token [google_complete $config $row $identity $intent $uid]
+            if {$intent eq "login"} {notify_verified_identity $config $request $token}
         }
         set target [safe_return_to [dict get $identity return_to]]
         if {$target eq {}} {set target [dict get $config -prefix]}

@@ -12,13 +12,14 @@ if {[lindex $argv 0] eq "child"} {
 }
 package require web-user
 set ::env(ENV) PROD
+set mountSettings {email_login_enabled true login_after_email_verification true}
 
 # Open an independent worker connection and register its own crypto handles.
 proc race_store {fixture} {
     set connection [::tpersist::db_connect -dialect postgresql -autobegin false {*}$::env(WEB_USER_TEST_PG)]
     set aead [::tink::register_keyset [dict get $fixture aead]]
     set mac [::tink::register_keyset [dict get $fixture mac]]
-    set store [::web::user::create -connection $connection -config [dict create tenant [dict get $fixture tenant] \
+    set store [::web::user::create -connection $connection -config [dict create db_dialect postgres tenant [dict get $fixture tenant] \
         aead $aead mac $mac email_hash_salt race-test bcrypt_cost 4 login_captcha_after 0 collect_username true]]
     return $store
 }
@@ -45,7 +46,7 @@ if {[lindex $argv 0] eq "child"} {
     set status 200
     if {[catch {
         ::tpersist::db_transaction [dict get $store -connection] {
-            ::web::user::action_verify [dict create -store $store] $row {code 000123}
+            ::web::user::action_verify [dict create -store $store -config $mountSettings] $row {code 000123}
         }
     } message options]} {
         if {[lrange [dict get $options -errorcode] 0 1] ne {WEB USER}} {return -options $options $message}
@@ -67,7 +68,7 @@ foreach scenario {email username} {
     set store [race_store $fixture]
     set children {}
     try {
-        ::web::user::initdb [dict get $store -connection]
+        ::web::user::initdb [dict get $store -connection] [dict get $store -config]
         set password [::web::user::password_hash {a shared test password} {bcrypt_cost 4}]
         foreach number {1 2} {
             set id user_[::ksuid::generate_ksuid]
@@ -100,7 +101,7 @@ foreach scenario {email username} {
             set number [expr {[lindex $statuses 0] == 409 ? 1 : 2}]
             set row [::web::user::session $store [dict get $fixture token$number]]
             ::tpersist::db_transaction [dict get $store -connection] {
-                ::web::user::action_verify [dict create -store $store] $row {code 000123 username replacement}
+                ::web::user::action_verify [dict create -store $store -config $mountSettings] $row {code 000123 username replacement}
             }
             if {[llength [::web::user::rows $store web_user_users]] != 2} {error "username correction did not activate the remaining registration"}
         }

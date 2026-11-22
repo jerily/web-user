@@ -1,14 +1,11 @@
 {
   "name": "web-user",
   "license": "MIT",
-  "version": "0.7.3",
-  "iuse": [
-    "local"
-  ],
+  "version": "0.7.4",
   "scripts": {},
   "dependencies": {
     "tcl": ">=9.1.0,<10.0.0",
-    "tpersist": "^0.1.6",
+    "tpersist": "^0.1.8",
     "tpathexp": "^1.1.0",
     "jinja2-tcl": "^0.2.0",
     "tjson": "^1.0.28",
@@ -16,26 +13,12 @@
     "tmfa": "1.1.2",
     "tqrcodegen": "^1.1.1",
     "ksuid-tcl": "^1.0.5",
-    "tdbcsqlite3": {
-      "version": ">=1.1.8",
-      "if": "+local"
-    },
-    "tdbcpostgres": {
-      "version": ">=1.1.8",
-      "if": "-local"
-    },
     "bcrypt-tcl": "2.0.1",
     "twebserver": "^1.47.56",
     "tsession": "^2.0.1",
     "topenapi": "^0.2.0",
-    "tsession-sqlite": {
-      "version": "^1.0.2",
-      "if": "+local"
-    },
-    "tsession-postgres": {
-      "version": "^1.0.2",
-      "if": "-local"
-    },
+    "tsession-sqlite": "^1.0.2",
+    "tsession-postgres": "^1.0.2",
     "pure-tcl-aws-ses": "^1.0.0",
     "pure-tcl-aws-sqs": "^1.0.0",
     "tcaptcha": "^1.0.0",

@@ -41,6 +41,10 @@ proc ::web::user::captcha_required {config view context} {
     if {$after == 1} {return 1}
     expr {$after > 0 && [login_failures $config $context] >= $after - 1}
 }
+proc ::web::user::honeypot_required {store view} {
+    expr {$view in {register forgot email-login login} && [property $store registration_honeypot]}
+}
+
 # Derive the storage key for a session-bound CAPTCHA.
 proc ::web::user::captcha_key {store context id} {tag $store $id [list form-captcha $context]}
 # Persist an expiring verifier and return the browser image and ID.

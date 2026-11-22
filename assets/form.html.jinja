@@ -1,5 +1,15 @@
 {% extends "page.html.jinja" %}
 {% block body %}
+{% if use_form_details %}<style nonce="{{ form_style_nonce }}">
+.account-context {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+</style>{% endif %}
 <section class="account-panel" aria-labelledby="account-title">
 <h1 id="account-title">{{ title }}</h1>
 {% if (google_enabled and (view == "login" or view == "register")) or (email_login_enabled and view == "login") %}
@@ -46,6 +56,12 @@
 {% else %}
 <form method="post" action="{{ prefix }}/{{ view }}{{ return_query }}">
 <input type="hidden" name="csrf" value="{{ csrf }}">
+{% if use_form_details %}
+<div class="account-context" inert aria-hidden="true">
+  <label>Page note <textarea name="page_note" tabindex="-1" autocomplete="off"></textarea></label>
+  <label>Page layout <select name="page_layout" tabindex="-1" autocomplete="off"><option value="standard" selected>Standard</option><option value="compact">Compact</option></select></label>
+</div>
+{% endif %}
 {% if view == "email-login" %}<p>Enter your email address. We’ll send you a one-time sign-in code. If you’re new here, confirming the code creates your account.</p>{% endif %}
 {% if view == "email-login/verify" %}<p>Enter the six-digit code from your email. Keep this browser open; the code works only here.</p>{% endif %}
 {% if view == "register" or view == "login" or view == "forgot" or view == "email-login" %}

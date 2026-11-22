@@ -14,8 +14,8 @@ namespace eval ::mailtest {}
 proc ::mailtest::setup {} {
     variable calls {}
     variable fail 0
-    variable config [dict create -deliver {} -prefix /members \
-        -store [dict create -env PROD -config {code_ttl 900 email_verification_required true verification_emails_enabled true}] \
+    variable config [dict create -prefix /members \
+        -store [dict create -config {require_email_delivery true aws_email_enabled true code_ttl 900 email_verification_required true verification_emails_enabled true}] \
         -config {email_enabled true email_from sender@example.com email_region us-east-1 title Garden origin https://garden.test}]
     rename ::aws::ses::create ::mailtest::real_create
     # Provide the create test fixture.
@@ -85,7 +85,7 @@ test email-2 {disabled delivery and LOCAL never create an SES client} -setup {::
     ::web::user::validate_email_config $config
     ::web::user::deliver $config reset person@example.com 012345
     dict set config -config email_enabled true
-    dict set config -store -env LOCAL
+    dict set config -store -config aws_email_enabled false
     ::web::user::validate_email_config $config
     ::web::user::deliver $config reset person@example.com 012345
     set ::mailtest::calls
@@ -114,9 +114,8 @@ test email-4 {notification templates contain no code or credential; failures sti
     set result
 } -cleanup {::mailtest::cleanup} -result {1 1 1 1 1 1 1 destroy}
 
-test email-5 {the enable flag also gates an explicit delivery callback} -setup {::mailtest::setup} -body {
+test email-5 {the enable flag gates direct SES delivery} -setup {::mailtest::setup} -body {
     set config $::mailtest::config
-    dict set config -deliver ::mailtest::client
     dict set config -config email_enabled false
     ::web::user::deliver $config reset person@example.com 123456
     set ::mailtest::calls
@@ -126,11 +125,10 @@ test email-6 {disabling verification messages preserves recovery and security no
     set config $::mailtest::config
     dict set config -store -config email_verification_required false
     dict set config -store -config verification_emails_enabled false
-    dict set config -deliver ::mailtest::client
     ::web::user::validate_email_config $config
     foreach purpose {verify reset password-changed} {::web::user::deliver $config $purpose person@example.com 123456}
     lmap call $::mailtest::calls {lindex $call 0}
-} -cleanup {::mailtest::cleanup} -result {reset password-changed}
+} -cleanup {::mailtest::cleanup} -result {create send_email destroy create send_email destroy}
 test email-queue-1 {queue receives the SES message and expiry before callback, without calling SES} -setup {
     ::mailtest::queue_setup
 } -body {
@@ -162,7 +160,7 @@ test email-queue-2 {enqueue/callback failures destroy client without invoking ca
 test email-queue-3 {LOCAL, disabled mail, and disabled verification never enqueue} -setup {
     ::mailtest::queue_setup
 } -body {
-    foreach path {{-store -env} {-config email_enabled} {-store -config verification_emails_enabled}} value {LOCAL false false} {
+    foreach path {{-store -config aws_email_enabled} {-config email_enabled} {-store -config verification_emails_enabled}} value {false false false} {
         set config $::mailtest::config
         dict set config {*}$path $value
         ::web::user::deliver $config verify person@example.com 123456
@@ -201,13 +199,6 @@ test email-queue-5 {notifications have no code expiry and the callback is option
     list [dict get $body expires_at] [lindex $::mailtest::calls end]
 } -cleanup {::mailtest::queue_cleanup} -result {0 destroy}
 
-test email-queue-6 {explicit transport still takes precedence over queueing} -setup {
-    ::mailtest::queue_setup
-} -body {
-    dict set ::mailtest::config -deliver ::mailtest::client
-    ::web::user::deliver $::mailtest::config reset person@example.com 123456
-    set ::mailtest::calls
-} -cleanup {::mailtest::queue_cleanup} -result {{reset person@example.com 123456}}
 test email-queue-login {one-time sign-in emails expire in the delivery queue and use the verification URL} -setup {
     ::mailtest::queue_setup
 } -body {

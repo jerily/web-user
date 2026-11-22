@@ -7,7 +7,7 @@ namespace eval ::signupqueue {}
 
 test email-signup-queue {new-account requests queue their code before waking the worker; SES is never called inline} -setup {
     ::authtest::setup LOCAL {bcrypt_cost 4}
-    dict set ::authtest::store -env PROD
+    dict set ::authtest::store -config [dict merge [dict get $::authtest::store -config] {secure_cookies true require_https_origin true allow_oauth_http false allow_loopback_origin false show_verification_codes false require_email_delivery true aws_email_enabled true}]
     $::authtest::router destroy
     set ::authtest::router [::tpathexp::router]
     set ::authtest::config [::web::user::mount $::authtest::router -store $::authtest::store -config {

@@ -14,10 +14,11 @@ foreach {mode constraint} {LOCAL {} PROD migration_pg} {
         if {$mode eq "PROD"} {set options [concat {-dialect postgresql -autobegin false} $::env(WEB_USER_MIGRATION_PG)]}
         set db [::tpersist::db_connect {*}$options]
         ::tpersist::db_apply_schema $db [file join [file dirname [info script]] sql legacy-users.json]
-        set backend [::web::user::session_backend]
+        set policy [dict create db_dialect [expr {$mode eq "LOCAL" ? "sqlite" : "postgres"}]]
+        set backend [::web::user::session_backend $policy]
         ${backend}::initdb $db
         set handles [list [::tink::register_keyset [::tink::aead::create_keyset AES256_GCM]] [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]]
-        set store [::web::user::create -connection $db -config [dict create tenant migration aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt test-salt login_captcha_after 0]]
+        set store [::web::user::create -connection $db -config [dict replace $policy tenant migration aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt test-salt login_captcha_after 0]]
     } -body {
         set hash [::web::user::password_hash {a legacy password} {bcrypt_cost 4}]
         foreach {uid verified address} {pending 0 pending@example.com member 1 member@example.com} {
@@ -28,13 +29,14 @@ foreach {mode constraint} {LOCAL {} PROD migration_pg} {
         ::web::user::insert $store web_user_profiles [dict create id pending first_name [::web::user::seal $store Mira {profile pending first_name}] \
             last_name [::web::user::seal $store Fern {profile pending last_name}]]
         set token [::web::user::new_session $store verify pending 000123]
-        ::web::user::initdb $db
-        ::web::user::initdb $db
+        ::web::user::initdb $db $policy
+        ::web::user::initdb $db $policy
         set result [list [dict get [::web::user::user_by_id $store member] active] [expr {[::web::user::user_by_id $store pending] eq {}}] \
             [::web::user::unseal $store [dict get [::web::user::registration $store pending] password] {password-hash pending}]]
         set result [lreplace $result 2 2 [expr {[lindex $result 2] eq $hash}]]
         ::tpersist::db_transaction $db {
-            ::web::user::action_verify [dict create -store $store] [::web::user::session $store $token] {code 000123}
+            set config [dict create -store $store -config {email_login_enabled false login_after_email_verification false}]
+            ::web::user::action_verify $config [::web::user::session $store $token] {code 000123}
         }
         lappend result [dict get [::web::user::user_by_id $store pending] active] \
             [dict get [::web::user::profile_names $store pending] first_name] [::web::user::session $store $token] \

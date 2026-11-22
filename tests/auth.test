@@ -28,19 +28,45 @@ proc ::authtest::setup {{mode LOCAL} {policy {}} {mount {}}} {
         ::tpersist::db_disconnect $db
         set db [::tpersist::db_connect -dialect postgresql -autobegin 0 {*}$::env(WEB_USER_TEST_PG)]
     }
-    ::web::user::initdb $db
+    if {$mode eq "LOCAL"} {set policy [dict merge {secure_cookies false require_https_origin false allow_oauth_http true allow_loopback_origin true show_verification_codes true require_email_delivery false aws_email_enabled true} $policy]}
+    dict set policy db_dialect [expr {$mode eq "LOCAL" ? "sqlite" : "postgres"}]
+    ::web::user::initdb $db $policy
     set handles [list [::tink::register_keyset [::tink::aead::create_keyset AES256_GCM]] [::tink::register_keyset [::tink::mac::create_keyset HMAC_SHA256]]]
     set store [::web::user::create -connection $db -config [dict merge [dict create tenant test-[pid]-[incr serial] aead [lindex $handles 0] mac [lindex $handles 1] email_hash_salt test-email-salt] $policy]]
     set router [::tpathexp::router]
-    set config [::web::user::mount $router -store $store -config [dict merge {origin https://community.test email_enabled true deliver ::authtest::delivery} $mount]]
+    set config [::web::user::mount $router -store $store -config [dict merge {origin https://community.test email_enabled true email_region us-east-1 email_from accounts@example.test} $mount]]
+    package require pure-tcl-aws-ses
+    rename ::aws::ses::create ::authtest::real_ses_create
+    proc ::aws::ses::create {options} {return ::authtest::ses}
     set ::authtest::delivered {}
     set ::authtest::csrf {}
     set ::authtest::cookie {}
 }
+# Capture the formatted message at the SES SDK boundary.
+proc ::authtest::ses {method args} {
+    if {$method eq "destroy"} {return}
+    if {$method ne "send_email"} {error "Unexpected SES operation $method"}
+    set mail [lindex $args 0]
+    switch -glob -- [dict get $mail subject] {
+        {*Confirm your email*} {set purpose verify}
+        {*Reset your password*} {set purpose reset}
+        {*sign-in code*} {set purpose login}
+        {*password was changed*} {set purpose password-changed}
+        {*Two-factor authentication enabled*} {set purpose mfa-enabled}
+        {*Two-factor authentication disabled*} {set purpose mfa-disabled}
+        default {error "Unexpected account email"}
+    }
+    set code {}
+    regexp {code is: ([0-9]{6})} [dict get $mail text] -> code
+    delivery $purpose [lindex [dict get $mail to] 0] $code
+}
+
 # Provide the delivery test fixture.
 proc ::authtest::delivery {purpose address code} {set ::authtest::delivered [list $purpose $address $code]}
 # Provide the cleanup test fixture.
 proc ::authtest::cleanup {} {
+    rename ::aws::ses::create {}
+    rename ::authtest::real_ses_create ::aws::ses::create
     $::authtest::router destroy
     ::tpersist::db_disconnect $::authtest::db
     foreach h $::authtest::handles {::tink::unregister_keyset $h}
@@ -545,7 +571,7 @@ test auth-24 {existing members can edit names only with authentication and CSRF;
     set user [lindex [::web::user::rows $::authtest::store web_user_users] 0]
     set uid [dict get $user id]
     ::tpersist::db_drop_table $::authtest::db web_user_profiles
-    ::web::user::initdb $::authtest::db
+    ::web::user::initdb $::authtest::db [dict get $::authtest::store -config]
     set result [list [::authtest::call GET /user/profile] \
         [::authtest::call POST /user/profile {first_name Mira last_name Fern}]]
     ::authtest::login
@@ -635,14 +661,39 @@ test auth-28 {registration, login and recovery share the salted email lookup} -s
         [::authtest::call POST /user/forgot {email person@example.com}] $::authtest::delivered
     set result
 } -cleanup {::authtest::cleanup} -result {200 1 200 1 200 {reset person@example.com} 401 200 {}}
-test auth-store-policy {LOCAL selects SQLite and PROD rejects a borrowed SQLite connection} -setup {
+test auth-store-policy {configured SQLite also works in PROD} -setup {
     ::authtest::setup LOCAL {bcrypt_cost 5}
 } -body {
     set result [list [dict get $::authtest::store -sessions dialect]]
     set ::env(ENV) PROD
-    lappend result [catch {::web::user::create -connection $::authtest::db -config [dict get $::authtest::store -config]} message] $message
+    set store [::web::user::create -connection $::authtest::db -config [dict get $::authtest::store -config]]
+    lappend result [dict get $store -sessions dialect]
     set result
-} -cleanup {set ::env(ENV) LOCAL; ::authtest::cleanup} -result {sqlite 1 {session store requires a postgresql connection}}
+} -cleanup {set ::env(ENV) LOCAL; ::authtest::cleanup} -result {sqlite sqlite}
+
+test account-explicit-policy {account policy works without ENV and requires a transport when configured} -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 4}
+} -body {
+    unset ::env(ENV)
+    set policy [dict replace [dict get $::authtest::store -config] secure_cookies true \
+        require_https_origin false show_verification_codes false require_email_delivery true aws_email_enabled false]
+    set store [::web::user::create -connection $::authtest::db -config $policy]
+    set config [dict replace $::authtest::config -store $store]
+    set failed [catch {::web::user::validate_email_config $config} message]
+    list [::web::user::property $store secure_cookies] [::web::user::property $store require_https_origin] \
+        [::web::user::property $store show_verification_codes] $failed $message
+} -cleanup {set ::env(ENV) LOCAL; ::authtest::cleanup} -result {1 0 0 1 {Required account email needs aws_email_enabled}}
+
+test auth-local-postgres {LOCAL can use PostgreSQL sessions and local email codes together} -constraints postgres -setup {
+    ::authtest::setup LOCAL {bcrypt_cost 5}
+    set pg [::web::user::connect [dict create db_dialect postgres postgresql $::env(WEB_USER_TEST_PG)]]
+} -body {
+    set policy [dict replace [dict get $::authtest::store -config] db_dialect postgres]
+    ::web::user::initdb $pg $policy
+    set store [::web::user::create -connection $pg -config $policy]
+    set token [::web::user::new_session $store anon]
+    list [::web::user::property $store show_verification_codes] [dict get $store -sessions dialect] [dict get [::web::user::session $store $token] kind]
+} -cleanup {::tpersist::db_disconnect $pg; ::authtest::cleanup} -result {1 postgresql anon}
 
 foreach mode {LOCAL PROD} {
     set constraint [expr {$mode eq "PROD" ? "postgres" : {}}]
@@ -1008,7 +1059,7 @@ test auth-captcha-12 {a new store and mount reuse persistent failure counts and 
     $::authtest::router destroy
     set ::authtest::router [::tpathexp::router]
     set ::authtest::config [::web::user::mount $::authtest::router -store $::authtest::store \
-        -config {origin https://community.test email_enabled true deliver ::authtest::delivery}]
+        -config {origin https://community.test email_enabled true email_region us-east-1 email_from accounts@example.test}]
     list [::web::user::login_failures $::authtest::config {addr 127.0.0.1}] \
         [::authtest::call POST /user/login [dict merge [::authtest::credentials] $fields]]
 } -cleanup {::authtest::captcha_cleanup} -result {2 200}
@@ -1183,12 +1234,49 @@ test auth-csrf-loopback {Local origin aliases require a matching Host and valid 
     dict set request headers Origin http://127.0.0.1:8080
     lappend result [::web::user::csrf $::authtest::config verify $request {} invalid]
     set production $::authtest::config
-    dict set production -store -env PROD
+    dict set production -store -config allow_loopback_origin false
     dict set production -config origin https://community.test
     lappend result [::web::user::csrf $production verify $request {} $::authtest::csrf]
     dict set request headers Origin https://community.test
     lappend result [::web::user::csrf $production verify $request {} $::authtest::csrf]
     set result
 } -cleanup {::authtest::cleanup} -result {1 1 1 1 1 0 0 0 0 0 0 0 0 1}
+
+test honeypot-1 {all protected forms validate both defaults before delivery or registration} -setup {
+    ::authtest::setup LOCAL {registration_honeypot true registration_captcha false login_captcha_after 0} {email_login_enabled true}
+} -body {
+    set checked {}
+    foreach view {login register forgot email-login} {
+        ::authtest::call GET /user/$view
+        set html [dict get $::authtest::last body]
+        if {![string match {*name="page_note"*name="page_layout"*} $html] || [string match {*name="captcha_answer"*} $html]} {
+            error "Incorrect protection on $view"
+        }
+        if {![regexp {<style nonce="([^"]+)">[^<]*clip-path: inset\(50%\)} $html -> nonce] ||
+            [string first "'nonce-$nonce'" [dict get $::authtest::last headers content-security-policy]] < 0} {
+            error "Missing authorized inline form style on $view"
+        }
+        set fields [dict create email guest@example.test]
+        if {$view in {register login}} {dict set fields password $::authtest::password}
+        foreach values {{page_note filled page_layout standard} {page_note {} page_layout compact} {page_note {}} {page_layout standard}} {
+            if {[::authtest::call POST /user/$view [dict merge $fields $values]] != 400} {error "Accepted altered form on $view"}
+        }
+        lappend checked $view
+    }
+    list $checked $::authtest::delivered \
+        [::authtest::call POST /user/email-login {email guest@example.test page_note {} page_layout standard}]
+} -cleanup {::authtest::cleanup} -result {{login register forgot email-login} {} 200}
+
+test verified-identity-1 {host callback follows successful email proof and completed password login} -setup {
+    set ::authtest::identities {}
+    proc ::authtest::identity {request uid} {lappend ::authtest::identities [list [dict get $request path] $uid]}
+    ::authtest::setup LOCAL {} {verified_identity_callback ::authtest::identity}
+} -body {
+    ::authtest::register
+    ::authtest::login
+    lassign $::authtest::identities verification login
+    list [llength $::authtest::identities] [lindex $verification 0] [lindex $login 0] \
+        [expr {[lindex $verification 1] eq [dict get [::authtest::me] id] && [lindex $login 1] eq [lindex $verification 1]}]
+} -cleanup {::authtest::cleanup; rename ::authtest::identity {}; unset ::authtest::identities} -result {2 /user/verify /user/login 1}
 
 cleanupTests

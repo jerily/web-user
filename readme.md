@@ -12,16 +12,15 @@ and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
 package require web-user 0.7.0
-# Set ENV outside the application. Only exact LOCAL or PROD is accepted.
-set connection [::web::user::connect [dict create \
-    sqlite_path ./data/community.sqlite3 \
+set policy [dict create db_dialect postgres]
+set connection [::web::user::connect [dict replace $policy \
     postgresql [dict create -host db -database community -user community]]]
-::web::user::initdb $connection ;# explicit maintenance; before workers start
+::web::user::initdb $connection $policy ;# explicit maintenance; before workers start
 set router [::tpathexp::router]
-set accounts [::web::user::mount $router -connection $connection -policy {tenant example} \
+set accounts [::web::user::mount $router -connection $connection -policy [dict replace $policy tenant example] \
     -secret_config [dict create aead_keyset $aeadKeyset mac_keyset $macKeyset email_hash_salt $emailHashSalt] \
     -config [dict create prefix /user origin https://community.example issuer Community \
-        title Account master_template $siteMaster]]
+        title Account email_enabled true email_from accounts@community.example email_region us-east-1 master_template $siteMaster]]
 ```
 
 `aeadKeyset` is Tink AES256_GCM keyset JSON; `macKeyset` is HMAC_SHA256
@@ -31,12 +30,12 @@ removing its routes and before closing the connection.
 `emailHashSalt` is the required `email_hash_salt` config property. Generate it once
 per site (for example, `openssl rand -hex 32`), keep it in private configuration,
 and reuse it across workers and restarts. There is no default salt.
-`connect` uses SQLite only for LOCAL and PostgreSQL only for PROD; no fallback.
-The host must supply an autocommit connection (`-autobegin 0`) when using `create`
-directly. A borrowed connection must match the environment; a mismatched dialect is rejected.
-Sessions use `tsession-sqlite` in LOCAL and `tsession-postgres` in PROD. Schema changes never happen in `mount` or request handlers.
+`::web::user::connect` passes its connection dictionary to `::tpersist::db_connect_config`.
+Set `db_dialect` to `sqlite` or `postgres` in the host configuration. Pass it to
+`connect`, `initdb`, and the account store policy. A borrowed connection must
+use that dialect and autocommit mode (`-autobegin 0`). Schema changes never happen in `mount` or request handlers.
 
-Requires Tcl 9.1 or newer. Dependency minimums include tpersist 0.1.2,
+Requires Tcl 9.1 or newer. Dependency minimums include tpersist 0.1.8,
 Jinja 0.1.1, tjson 1.0.28, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.56.
 
 Mount configuration accepts `assets_url` to supply the browser-asset base URL,
@@ -59,7 +58,7 @@ the callback API and host wiring.
 accounts immediately while keeping email ownership unverified. The independent
 `verification_emails_enabled` flag controls optional confirmation messages;
 recovery and security notices retain their own delivery path. Required verification
-in PROD needs both verification messages and the mount's `email_enabled` switch.
+with `require_email_delivery true` needs both verification messages and the mount's `email_enabled` switch.
 
 ## Flows
 
@@ -67,8 +66,10 @@ The lifetimes, password and TOTP policy below are defaults. Configure them in
 `create -config`; see [MOUNTING.md](MOUNTING.md).
 
 - Register with email and a password of at least 15 characters (up to 72 UTF-8
-  bytes), then enter the six-digit numeric email confirmation code before logging
-  in. Email normalization trims and lowercases; passwords are preserved exactly.
+  bytes), then enter the six-digit email confirmation code. Mounts that enable
+  both `email_login_enabled` and `login_after_email_verification` also sign
+  the user in after any required MFA. Email normalization trims and lowercases;
+  passwords are preserved exactly.
   Pending registrations are independent and expire. The first successful
   confirmation creates the account and invalidates competing registrations for
   that email. A claimed username can be replaced on the verification form.
@@ -116,10 +117,9 @@ challenges return to their starting form, and rate limits show a reload link.
 Successful sign-in still follows a validated `return_to` destination.
 
 Email is opt-in: set mount properties `email_enabled true`, `email_from`, and
-`email_region`. In PROD, `pure-tcl-aws-ses` 1.0.0+ sends verification
+`email_region`. With `aws_email_enabled true`, `pure-tcl-aws-ses` 1.0.0+ sends verification
 and recovery codes, MFA enabled/disabled notices, and password-change notices
-for both changes and resets. It uses the AWS credential provider chain. LOCAL
-never invokes SES. Disabled email sends nothing; PROD registration/recovery
+for both changes and resets. It uses the AWS credential provider chain. Disabling `aws_email_enabled` skips built-in delivery. Disabled email sends nothing; PROD registration/recovery
 therefore needs email enabled or an explicitly configured transport.
 
 To queue mail instead, set mount properties `email_queue_enabled true` and
@@ -130,8 +130,7 @@ Use the queue URL, not its name or ARN. This replaces `email_queue_name` and
 avoids a queue URL lookup on every send. It requires `pure-tcl-aws-sqs` 1.0.0+. The optional
 `email_queue_callback` command prefix receives the queue URL after SQS accepts
 each message, allowing the host to wake its worker. Callback failures leave the
-message queued; the host should schedule recovery independently. LOCAL never
-contacts SQS. An explicit `deliver` transport still takes precedence.
+message queued; the host should schedule recovery independently. Queued delivery also requires `aws_email_enabled`.
 
 Queue bodies are JSON objects with `version: 1`, `expires_at` (Unix seconds,
 zero for security notices), and `message` (the SES `from`, `to` array, `subject`,
@@ -145,18 +144,15 @@ produces `ttrek.sh: Confirm your email for Your account`. An empty issuer leaves
 subjects unprefixed. The store's `tenant` identifies account data and is not
 used for email branding.
 
-An optional `deliver` command prefix replaces SES and receives `purpose email
-code`; it also requires `email_enabled true` and may run in LOCAL. Purposes are
-`verify`, `reset`, `password-changed`, `mfa-enabled`, and `mfa-disabled`. Notices
-have an empty code and contain no password or MFA secret. Delivery happens after
+LOCAL uses the same queue message format as production. The local launcher
+routes AWS requests to the mocks. Delivery happens after
 commit. A failure logs a generic error while preserving the committed result
 and replacement cookie; it does not expose account existence. Direct SES uses
 the SDK's retry policy; queued delivery needs a host-provided consumer and retry
 schedule. Operators must monitor delivery failures. Recovery codes must be entered
 in the requesting browser and are never put in URLs or logs.
 
-Only exact `ENV=LOCAL` displays current development codes in returned forms.
-There is no request parameter or site property to enable code exposure in PROD.
+The host policy `show_verification_codes` enables development codes in returned forms and defaults to false.
 The local display does not relax verification, expiry or replay rules. QR/manual
 setup secrets necessarily appear during enrollment in both environments.
 
@@ -190,8 +186,8 @@ be restarted. Keep the AEAD keyset separate from the database and its backups,
 and retain the original keyset when restoring encrypted account records.
 
 All state-changing forms require session-bound CSRF. Cookies are host-only,
-HttpOnly, SameSite=Lax and Path=/, and also Secure with a `__Host-` name in PROD.
-Set the exact site `origin` (HTTPS in PROD); the host validates Host and handles
+HttpOnly, SameSite=Lax and Path=/, and also Secure with a `__Host-` name when `secure_cookies` is enabled.
+Set the exact site `origin` (HTTPS when `require_https_origin` is enabled); the host validates Host and handles
 TLS. Context `addr` must come from the server or a trusted proxy adapter, never an
 unvalidated request header. Limits use persistent 15-minute windows: 60 mutation
 attempts per peer, 10 per action/account, 5 per challenge, 120 anonymous page
@@ -240,10 +236,10 @@ invalidates email lookups. Preserve both with the encryption keysets.
 With dependencies on `TCLLIBPATH`:
 
 ```sh
-ENV=LOCAL tclsh tests/all.tcl
+tclsh tests/all.tcl
 # Optional: also run PROD account/password/session cases against PostgreSQL:
 WEB_USER_TEST_PG='-host 127.0.0.1 -port 55439 -database postgres -user test' \
-  ENV=LOCAL tclsh tests/all.tcl
+  tclsh tests/all.tcl
 ```
 
 Tests exercise registration, recovery, session isolation/revocation, native crypto,
@@ -254,11 +250,11 @@ runs use unique tenant namespaces; never point tests at a production database.
 
 `tsession` signs, reads and sets each mount's cookie using its own configuration
 and the store's Tink MAC handle. Session records, absolute expiry and revocation
-use `tsession-sqlite` (LOCAL) or `tsession-postgres` (PROD), with the same borrowed
+use the configured SQLite or PostgreSQL session adapter, with the same borrowed
 `tpersist` connection as account writes. `initdb` creates `tsession_sessions`;
 there is no old-table fallback or session migration. Existing sessions are
 invalidated by this storage change. Run explicit initialization before PROD startup. Cookies
-are HttpOnly, SameSite=Lax, Path=/, and Secure with a `__Host-` name in PROD.
+are HttpOnly, SameSite=Lax, Path=/, and Secure with a `__Host-` name when `secure_cookies` is enabled.
 
 Request schemas use `topenapi` 0.2.0; see `schemas/operations.json` and the mounting guide.
 

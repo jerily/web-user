@@ -28,6 +28,47 @@ proc ::authtest::pending {{password {}}} {
     list [browser] [lindex $::authtest::delivered 2]
 }
 
+foreach {emailLogin signIn expected} {true true 1 true false 0 false true 0 false false 0} {
+    test registrations-sign-in-$emailLogin-$signIn {verification can sign in only when both mount options allow it} -setup {
+        ::authtest::setup LOCAL {bcrypt_cost 4} [dict create email_login_enabled $emailLogin login_after_email_verification $signIn]
+    } -body {
+        lassign [::authtest::pending] browser code
+        set wrong [expr {$code eq "000000" ? "111111" : "000000"}]
+        set path /user/verify?return_to=%2Fprojects
+        set result [list [::authtest::call POST $path [dict create code $wrong]] [expr {[::authtest::me] eq {}}]]
+        lappend result [::authtest::call POST $path [dict create code $code]]
+        if {$expected} {lappend result [dict get $::authtest::last headers Location]}
+        set user [::web::user::user_by_email $::authtest::store person@example.com]
+        lappend result [dict get $user verified] [expr {[::authtest::me] ne {}}] [expr {[dict get $user last_email_login_at] > 0}]
+        ::authtest::restore_browser $browser
+        lappend result [::authtest::call POST $path [dict create code $code]]
+    } -cleanup ::authtest::cleanup -result [expr {$expected ? {400 1 302 /projects 1 1 1 403} : {400 1 200 1 0 0 403}}]
+}
+
+test registrations-sign-in-mfa {optional verification waits for MFA before sign-in and the host callback} -setup {
+    set ::authtest::verified {}
+    proc ::authtest::on_verified {request uid} {lappend ::authtest::verified $uid}
+    ::authtest::setup LOCAL {bcrypt_cost 4 email_verification_required false} {
+        email_login_enabled true login_after_email_verification true verified_identity_callback ::authtest::on_verified
+    }
+} -body {
+    lassign [::authtest::pending] browser code
+    set store $::authtest::store
+    set user [::web::user::user_by_email $store person@example.com]
+    set uid [dict get $user id]
+    set secret JBSWY3DPEHPK3PXP
+    ::web::user::save_user $store $user [dict create mfa_secret [::web::user::seal $store $secret [list mfa $uid]]]
+    set result [list [::authtest::call POST /user/verify [dict create code $code]] \
+        [dict get [::web::user::session $store [::authtest::token]] kind] [expr {[::authtest::me] eq {}}] \
+        [dict get [::web::user::user_by_id $store $uid] last_email_login_at] $::authtest::verified]
+    lappend result [::authtest::call POST /user/two-factor [dict create code [::web::user::totp_code $store $secret]]] \
+        [expr {[dict get [::authtest::me] id] eq $uid && $::authtest::verified eq [list $uid]}]
+} -cleanup {
+    ::authtest::cleanup
+    rename ::authtest::on_verified {}
+    unset ::authtest::verified
+} -result {200 two-factor 1 0 {} 200 1}
+
 test registrations-independent {each browser retains its credentials; first confirmation removes competing registrations} -setup {
     ::authtest::setup LOCAL {bcrypt_cost 4 login_captcha_after 0}
 } -body {
@@ -103,7 +144,7 @@ test registrations-policy {invalid policies fail early and required verification
     }
     foreach {required send delivery expected} {true true true 0 true false true 1 true true false 1 false false false 0 false true true 0} {
         set config $::authtest::config
-        dict set config -store -env PROD
+        dict set config -store -config require_email_delivery true
         dict set config -store -config email_verification_required $required
         dict set config -store -config verification_emails_enabled $send
         dict set config -config email_enabled $delivery

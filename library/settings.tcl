@@ -8,10 +8,12 @@
 # the host as registered Tink handles; none are compiled into package defaults.
 proc ::web::user::settings {config} {
     set config [options {
-        tenant {} aead {} mac {} email_hash_salt {}
+        db_dialect {} tenant {} aead {} mac {} email_hash_salt {}
+        secure_cookies true require_https_origin true allow_oauth_http false allow_loopback_origin false
+        show_verification_codes false require_email_delivery true aws_email_enabled true
         bcrypt_cost 12 password_min_length 15 collect_names false collect_display_name false collect_username false
         email_verification_required true verification_emails_enabled true resend_cooldown 60
-        registration_captcha false captcha_ttl 300 captcha_length 6 captcha_letters true
+        registration_captcha false registration_honeypot false captcha_ttl 300 captcha_length 6 captcha_letters true
         login_captcha_after 3 login_captcha_window 900
         totp_digits 6 totp_period 30 totp_algorithm SHA1 totp_window 1
         session_ttl 43200 persistent_session_ttl 2592000 code_ttl 900 challenge_ttl 600 cleanup_grace_period 3600
@@ -20,7 +22,8 @@ proc ::web::user::settings {config} {
     } {*}$config]
     if {![string is boolean -strict [dict get $config collect_names]]} {error "collect_names must be a boolean"}
     dict set config collect_names [expr {!![dict get $config collect_names]}]
-    foreach key {collect_display_name collect_username registration_captcha captcha_letters email_verification_required verification_emails_enabled} {
+    foreach key {secure_cookies require_https_origin allow_oauth_http allow_loopback_origin show_verification_codes
+                 require_email_delivery aws_email_enabled collect_display_name collect_username registration_captcha registration_honeypot captcha_letters email_verification_required verification_emails_enabled} {
         if {![string is boolean -strict [dict get $config $key]]} {error "$key must be a boolean"}
         dict set config $key [expr {!![dict get $config $key]}]
     }
@@ -49,7 +52,7 @@ proc ::web::user::settings {config} {
 # Read one validated account policy setting.
 proc ::web::user::property {store name} {dict get $store -config $name}
 
-# Read the same policy for provisioning, verification and LOCAL display.
+# Read the same policy for provisioning, verification and optional development code display.
 proc ::web::user::totp_options {store} {
     list -digits [property $store totp_digits] -step [property $store totp_period] \
         -algorithm [property $store totp_algorithm]

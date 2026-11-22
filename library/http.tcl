@@ -77,16 +77,18 @@ proc ::web::user::csrf {config action request context submitted} {
     set token [cookie_token $config $request]
     if {[session [dict get $config -store] $token] eq {}} {return [expr {$action eq "issue" ? "" : 0}]}
     if {$action eq "issue"} {return [csrf_token $config $token]}
+    expr {[verify_tag [dict get $config -store] $submitted $token csrf] && [same_origin $config $request]}
+}
+proc ::web::user::same_origin {config request} {
     set expectedOrigin [dict get $config -config origin]
     set host [header $request host]
     # LOCAL browsers may use either loopback name and a custom listening port.
     # Still require the submitted Origin to match that request's host and port.
-    if {[dict get $config -store -env] eq "LOCAL" &&
+    if {[property [dict get $config -store] allow_loopback_origin] &&
         [regexp -nocase {^(localhost|127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?$} $host]} {
         set expectedOrigin [lindex [split $expectedOrigin :] 0]://[string tolower $host]
     }
-    expr {[verify_tag [dict get $config -store] $submitted $token csrf] &&
-        ([header $request origin] eq {} || [header $request origin] eq $expectedOrigin)}
+    expr {[header $request origin] eq {} || [header $request origin] eq $expectedOrigin}
 }
 # Parse a bounded URL-encoded body and reject duplicate fields.
 proc ::web::user::form {request {maximum 32768}} {
@@ -153,18 +155,18 @@ proc ::web::user::render {config view token {extra {}}} {
         package require tqrcodegen 1.1.1
         dict set fields qr [::tqrcodegen::encode_to_svg $uri]
         dict set fields secret $secret
-        if {[dict get $store -env] eq "LOCAL"} {dict set fields debug_code [totp_code $store $secret]}
+        if {[property $store show_verification_codes]} {dict set fields debug_code [totp_code $store $secret]}
     }
-    if {$view eq "two-factor" && $row ne {} && [dict get $row kind] eq "two-factor" && [dict get $store -env] eq "LOCAL"} {
+    if {$view eq "two-factor" && $row ne {} && [dict get $row kind] eq "two-factor" && [property $store show_verification_codes]} {
         set pending [user_by_id $store [dict get $row uid]]
         if {$pending ne {} && [dict get $pending mfa_secret] ne {}} {
             dict set fields debug_code [totp_code $store [unseal $store [dict get $pending mfa_secret] [list mfa [dict get $pending id]]]]
         }
     }
-    if {$view eq "two-factor/disable" && $user ne {} && $enabled && [dict get $store -env] eq "LOCAL"} {
+    if {$view eq "two-factor/disable" && $user ne {} && $enabled && [property $store show_verification_codes]} {
         dict set fields debug_code [totp_code $store [unseal $store [dict get $user mfa_secret] [list mfa [dict get $user id]]]]
     }
-    if {[dict get $store -env] ne "LOCAL"} {dict set fields debug_code {}}
+    if {![property $store show_verification_codes]} {dict set fields debug_code {}}
     dict set fields password_min_length [property $store password_min_length]
     dict set fields captcha_length [property $store captcha_length]
     dict set fields totp_digits [property $store totp_digits]
@@ -174,6 +176,12 @@ proc ::web::user::render {config view token {extra {}}} {
     }
     dict set context collect_profile [list BOOL [expr {[property $store collect_names] || [property $store collect_display_name] || [property $store collect_username]}]]
     dict set context captcha_letters [list BOOL [property $store captcha_letters]]
+    set useFormDetails [honeypot_required $store $view]
+    dict set context use_form_details [list BOOL $useFormDetails]
+    if {$useFormDetails} {
+        set nonce [binary encode base64 -maxlen 0 [::twebserver::random_bytes 18]]
+        dict set context form_style_nonce [list S $nonce]
+    }
     dict set context username_conflict [list BOOL $usernameConflict]
     dict set context reload_form [list BOOL [expr {[dict exists $extra reload_form] && [dict get $extra reload_form]}]]
     dict set context stay_signed_in [list BOOL [expr {[dict exists $extra stay_signed_in] && [dict get $extra stay_signed_in] eq "1"}]]
@@ -188,8 +196,13 @@ proc ::web::user::render {config view token {extra {}}} {
     dict set context password_enabled [list BOOL [expr {$user eq {} || [has_password $user]}]]
     dict set context google_linked [list BOOL [expr {$user ne {} && [google_linked $store [dict get $user id]]}]]
 
-    response 200 [render_template $config form.html.jinja \
-        [::tjson::typed_to_json [list M $context]]]
+    set result [response 200 [render_template $config form.html.jinja \
+        [::tjson::typed_to_json [list M $context]]]]
+    if {$useFormDetails} {
+        set policy [dict get $result headers content-security-policy]
+        dict set result headers content-security-policy [string map [list "style-src 'self'" "style-src 'self' 'nonce-$nonce'"] $policy]
+    }
+    return $result
 }
 # Keep expected account errors inside a usable form, without replaying secrets.
 proc ::web::user::form_error {config view token context fields message status detail needsCaptcha} {
@@ -238,6 +251,19 @@ proc ::web::user::form_error {config view token context fields message status de
         return [form_response $config $view $token $context $extra [lindex [dict get $opts -errorcode] 2] 0]
     }
 }
+# A verification-only flow supplies the confirmed UID. Sign-in flows notify
+# through the authenticated session after all required factors are complete.
+proc ::web::user::notify_verified_identity {config request token {verifiedUid {}}} {
+    set callback [dict get $config -config verified_identity_callback]
+    if {$callback eq {}} {return}
+    if {$verifiedUid eq {}} {
+        set store [dict get $config -store]
+        set user [authenticated $store [session $store $token]]
+        if {$user eq {} || ![dict get $user verified]} {return}
+        set verifiedUid [dict get $user id]
+    }
+    {*}$callback $request $verifiedUid
+}
 # Shared request guard; concrete endpoints supply their own action procedure.
 proc ::web::user::handle {config view handler challenge request context} {
     set token {}
@@ -274,6 +300,14 @@ proc ::web::user::handle {config view handler challenge request context} {
         if {$current ne {} && ![has_password $current] && $view in {change-password close-account two-factor/setup two-factor/disable}} {
             set operation [passwordless_operation $operation $view]
         }
+        if {[honeypot_required $store $view]} {
+            foreach {name expected} {page_note {} page_layout standard} {
+                if {![dict exists $fields $name] || [dict get $fields $name] ne $expected} {
+                    fail 400 "Form fields are missing or invalid."
+                }
+                dict unset fields $name
+            }
+        }
         validate_form $request $fields $operation
         throttle $store [list post [peer $context]] [property $store post_limit]
         if {[dict exists $fields email]} {throttle $store [list $view [email [dict get $fields email]]] [property $store account_limit]}
@@ -290,7 +324,7 @@ proc ::web::user::handle {config view handler challenge request context} {
             }
         }
         # Attempt counts commit independently, including unsuccessful checks.
-        if {$view eq "email-login/verify"} {
+        if {$view eq "email-login/verify" || ($view eq "verify" && [verification_signs_in $config])} {
             # Bound guesses across the challenge's entire lifetime, even across
             # rate-limit window boundaries. Failed attempts do not roll back.
             set limit [tag $store [dict get $row id] email-login-attempts]
@@ -314,6 +348,11 @@ proc ::web::user::handle {config view handler challenge request context} {
             if {$fresh eq {}} {fail 401 "Session expired. Reload the form."}
             set passwordCheck [expr {$view eq "login"}]
             set result [{*}$handler $config $fresh $fields]
+            if {$view eq "verify" && [dict get $result view] eq "login"} {
+                notify_verified_identity $config $request {} [dict get $fresh uid]
+            } elseif {$view in {verify login email-login/verify two-factor}} {
+                notify_verified_identity $config $request [dict get $result token]
+            }
         }
         if {[dict get $result token] ne {}} {set token [dict get $result token]}
         deliver_after_commit $config [dict get $result delivery]
