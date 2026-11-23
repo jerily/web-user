@@ -14,14 +14,14 @@ proc ::web::user::initdb {connection config} {
     ::tsession::initdb $connection $config
     db_apply_schema $connection [file join $root sql schema.json] -additive true
     migrate_registrations $connection
-    package require pure-tcl-oauth2-core 0.1.0
+    package require pure-tcl-oauth2-core
     ::oauth2::store::initdb $connection
 }
 # Validate account policy and borrow the host SQL connection.
 proc ::web::user::create {args} {
     set config [::web::core::options {-connection {} -config {}} {*}$args]
     set settings [settings [dict get $config -config]]
-    if {[dict get $settings registration_captcha] || [dict get $settings login_captcha_after] > 0} {package require tcaptcha 1.0.0}
+    if {[dict get $settings registration_captcha] || [dict get $settings login_captcha_after] > 0} {package require tcaptcha}
     foreach key {tenant aead mac} {
         dict set config -$key [dict get $settings $key]
     }

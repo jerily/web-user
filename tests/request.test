@@ -1,4 +1,4 @@
-package require tcltest 2
+package require tcltest
 package require web-user
 namespace import ::tcltest::test
 namespace eval ::requesttest {variable calls 0}

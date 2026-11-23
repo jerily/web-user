@@ -41,7 +41,7 @@ proc ::web::user::password_hash {value {config {}}} {
     if {[string length $value] < $minimum || [string length $bytes] > 72 || [string first \x00 $value] >= 0} {
         fail 400 "Password must contain at least $minimum characters, at most 72 UTF-8 bytes, and no NUL characters."
     }
-    package require bcrypt 2.0.1
+    package require bcrypt
     ::bcrypt::hashpw $value [::bcrypt::gensalt [dict get $config bcrypt_cost]]
 }
 # Decrypt the account-bound bcrypt hash only while checking a password. Bare
@@ -54,7 +54,7 @@ proc ::web::user::password_ok {store user value} {
     }]} {return 0}
     # Fail closed for unsupported hashes and unreasonable stored costs.
     if {![regexp {^\$2[aby]\$(0[4-9]|1[0-6])\$[./A-Za-z0-9]{53}$} $hash]} {return 0}
-    package require bcrypt 2.0.1
+    package require bcrypt
     ::bcrypt::checkpw $value $hash
 }
 # Verify a tenant- and purpose-bound MAC.
@@ -76,7 +76,7 @@ proc ::web::user::totp_step {store secret code last} {
     foreach step $steps {
         if {$step < 0} {continue}
         # Use Tink's native MAC verification for the comparison.
-        package require tmfa 1.1.2
+        package require tmfa
         set expected [tag $store [::tmfa::get_hotp $secret $step $digits [property $store totp_algorithm]] totp-check]
         if {$step > $last && [verify_tag $store $expected $code totp-check]} {return $step}
     }

@@ -11,8 +11,8 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 1.0.0
-package require tsession-postgres 1.0.2
+package require web-user
+package require tsession-postgres
 set policy [dict create db_dialect postgres]
 set connection [::web::user::connect [dict replace $policy \
     postgresql [dict create -host db -database community -user community]]]

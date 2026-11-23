@@ -59,7 +59,7 @@ proc ::web::user::totp_options {store} {
 }
 # Generate a development authenticator code using site policy.
 proc ::web::user::totp_code {store secret} {
-    package require tmfa 1.1.2
+    package require tmfa
     ::tmfa::get_totp $secret [property $store totp_digits] \
         [property $store totp_period] [property $store totp_algorithm]
 }

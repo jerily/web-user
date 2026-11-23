@@ -1,5 +1,5 @@
-package require tcltest 2
-package require web-core 0.1.0
+package require tcltest
+package require web-core
 namespace import ::tcltest::test
 
 test account-plan-defaults {optional account paths are reserved and enabled by site settings} -body {

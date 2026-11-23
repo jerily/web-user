@@ -850,7 +850,7 @@ test auth-password-schema-policy {credential schemas allow one character; writes
 
 # Observe image text only in tests; production exposes no CAPTCHA answer.
 proc ::authtest::captcha_setup {{policy {}}} {
-    package require tcaptcha 1.0.0
+    package require tcaptcha
     rename ::tcaptcha::image ::tcaptcha::test_real_image
     # Provide the image test fixture.
     proc ::tcaptcha::image {text} {
