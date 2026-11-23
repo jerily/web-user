@@ -45,7 +45,7 @@ proc ::web::user::google_configure {config} {
     if {[dict get $settings google_redirect_uri] ne "[dict get $settings origin][dict get $config -prefix]/google/callback"} {
         error "google_redirect_uri must match origin, mount prefix and /google/callback exactly"
     }
-    package require pure-tcl-oauth2-client 0.1.0
+    package require pure-tcl-oauth2-client
     set store [dict get $config -store]
     set transactions [::oauth2::store::sql [dict get $store -connection] [list web-user-google [dict get $store -tenant]]]
     try {

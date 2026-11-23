@@ -150,9 +150,9 @@ proc ::web::user::render {config view token {extra {}}} {
     if {$view in {account profile change-password close-account two-factor/setup two-factor/disable google/link}} {require_user $store $row}
     if {$view eq "two-factor/setup" && [dict get $row pending_secret] ne {}} {
         set secret [unseal $store [dict get $row pending_secret] [list mfa [dict get $user id]]]
-        package require tmfa 1.1.2
+        package require tmfa
         set uri [::tmfa::keyuri $secret totp [dict get $fields email] -issuer [dict get $config -config issuer] {*}[totp_options $store]]
-        package require tqrcodegen 1.1.1
+        package require tqrcodegen
         dict set fields qr [::tqrcodegen::encode_to_svg $uri]
         dict set fields secret $secret
         if {[property $store show_verification_codes]} {dict set fields debug_code [totp_code $store $secret]}

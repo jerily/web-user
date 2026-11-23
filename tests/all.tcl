@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: MIT.
 #
 
-package require tcltest 2
+package require tcltest
 set packageRoot [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $packageRoot
 # Exercise this checkout even when the same version is already installed.

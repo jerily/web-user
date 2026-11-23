@@ -72,7 +72,7 @@ proc ::web::user::mount_configured {router config} {
 # Prepare the exact host/package composition without opening storage or mounting
 # routes. Production hosts may skip validation after checking their artifact.
 proc ::web::user::prepare_templates {{settings {}}} {
-    package require jinja2 0.2.0
+    package require jinja2
     variable root
     set settings [dict merge {master_template {} templates {} template_renderer {} validate_templates true} $settings]
     if {![string is boolean -strict [dict get $settings validate_templates]]} {error "validate_templates must be a boolean"}
@@ -93,7 +93,7 @@ proc ::web::user::prepare_templates {{settings {}}} {
 proc ::web::user::render_template {config name json} {
     set renderer [dict get $config -config template_renderer]
     if {$renderer ne {}} {return [{*}$renderer $name $json]}
-    package require jinja2 0.2.0
+    package require jinja2
     set templates [dict get $config -templates]
     ::jinja2::render [dict get $templates $name] $json -templates $templates -path $name
 }
