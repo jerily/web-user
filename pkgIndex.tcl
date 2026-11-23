@@ -5,9 +5,15 @@
 # 
 
 # Register the package and load its dependencies.
-package ifneeded web-user 0.7.4 [list source [file join $dir library web-user.tcl]]
+package ifneeded web-user 1.0.0 [list source [file join $dir library web-user.tcl]]
 
-package ifneeded web-user::routes 1.0.1 [list source [file join $dir library routes.tcl]]
 
 package ifneeded web-user::config 1.0 [list source [file join $dir library config.tcl]]
 package ifneeded web-user::request 1.0 [list source [file join $dir library request.tcl]]
+
+# Locate the manifest without loading application services.
+package ifneeded web-user::manifest 1.0.0 [list apply {{dir} {
+    package require web-core 0.1.0
+    ::web::core::register web-user $dir
+    package provide web-user::manifest 1.0.0
+}} $dir]

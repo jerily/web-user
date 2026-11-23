@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Google identity is keyed by verified issuer and subject, never by email.
 proc ::web::user::mount_store {config} {
-    set secret [options {aead_keyset {} mac_keyset {} email_hash_salt {} google_client_secret {}} {*}[dict get $config -secret_config]]
+    set secret [::web::core::options {aead_keyset {} mac_keyset {} email_hash_salt {} google_client_secret {}} {*}[dict get $config -secret_config]]
     dict set config -secret_config $secret
     dict set config -owned-keys {}
     if {[dict get $config -connection] eq {}} {

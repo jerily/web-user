@@ -11,6 +11,17 @@ package require web-user
 namespace import ::tcltest::*
 ::tcltest::testConstraint postgres [info exists ::env(WEB_USER_TEST_PG)]
 namespace eval ::authtest {variable password {a long testing password}; variable serial 0}
+
+test auth-route-collision {a disabled POST endpoint reserves its path before mounting any account routes} -setup {
+    set router [::tpathexp::router]
+    $router add POST /team/google/start ::existing -strict true
+} -body {
+    set config [dict create -prefix /team -config {} -store {-config {}}]
+    set failed [catch {::web::user::mount_configured $router $config} message]
+    list $failed $message [dict get [$router match GET /team] statusCode] \
+        [dict get [$router match POST /team/google/start] handler]
+} -cleanup {$router destroy} -result {1 {route already mounted: /team/google/start} 404 ::existing}
+
 # Provide the setup test fixture.
 proc ::authtest::setup {{mode LOCAL} {policy {}} {mount {}}} {
     variable serial

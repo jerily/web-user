@@ -38,7 +38,7 @@ use that dialect and autocommit mode (`-autobegin 0`). Initialize
 schema explicitly before workers serve requests:
 
 ```tcl
-package require web-user 0.4.0
+package require web-user 1.0.0
 set policy [dict create db_dialect postgres]
 set connection [::web::user::connect [dict replace $policy \
     postgresql [dict create -host db -database accounts -user accounts]]]

@@ -11,7 +11,7 @@ HTTP transport. See [MOUNTING.md](MOUNTING.md) for the complete mounting contrac
 and [docs/auth-review.md](docs/auth-review.md) for the authentication design.
 
 ```tcl
-package require web-user 0.7.4
+package require web-user 1.0.0
 package require tsession-postgres 1.0.2
 set policy [dict create db_dialect postgres]
 set connection [::web::user::connect [dict replace $policy \
@@ -290,11 +290,9 @@ step that updates existing identities and their encrypted data and sessions.
 
 ## Deferred loading
 
-`package require web-user::routes 1.0` loads only route declarations.
-`::web::user::route_specs prefix binding ?settings? ?policy?` returns
-`{methods pattern handlerPrefix}` records. `binding` is opaque: a host can bind
-its prepared configuration or a reference resolved by its dispatcher. Account
-routes use display settings and policy to select optional routes at startup.
+`::web::core::manifest web-user` reads [api.json](api.json) without loading
+the application handlers. Pass the manifest, prefix and mount configuration to
+`::web::core::route_plan` to resolve bindings, middleware, and routes.
 
 For a host that authenticates in middleware and again while rendering navigation,
 wrap its complete dispatch in `::web::user::with_request $method { ... }` (from
