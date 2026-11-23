@@ -1,0 +1,25 @@
+package require tcltest 2
+package require web-core 0.1.0
+namespace import ::tcltest::test
+
+test account-plan-defaults {optional account paths are reserved and enabled by site settings} -body {
+    set api [::web::core::manifest web-user]
+    set binding [dict create tenant {site with spaces}]
+    set plan [::web::core::route_plan $api /accounts/ $binding]
+    set routes [dict get $plan routes]
+    set login [lindex $routes [lsearch -exact [lmap route $routes {dict get $route id}] login]]
+    set paths [lmap route $routes {dict get $route path}]
+    list [dict get $login path] [dict get $login methods] [dict get $login handler] \
+        [expr {"/accounts/google/start" in [dict get $plan paths] && "/accounts/google/start" ni $paths}] \
+        [expr {"/accounts/profile" ni $paths}] [catch {::web::core::route_plan $api / $binding}]
+} -result [list /accounts/login {GET POST} [list ::web::user::login {tenant {site with spaces}}] 1 1 1]
+
+test account-plan-enabled {settings and policy enable distinct account features} -body {
+    set plan [::web::core::route_plan [::web::core::manifest web-user] /members {} \
+        {google_enabled true} {collect_names true}]
+    set paths [lmap route [dict get $plan routes] {dict get $route path}]
+    list [expr {"/members/google/start" in $paths}] [expr {"/members/profile" in $paths}] \
+        [expr {"/members/email-login" in $paths}]
+} -result {1 1 0}
+
+::tcltest::cleanupTests

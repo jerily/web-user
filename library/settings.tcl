@@ -7,7 +7,7 @@
 # Site policy is immutable for the lifetime of a store. Secrets are supplied by
 # the host as registered Tink handles; none are compiled into package defaults.
 proc ::web::user::settings {config} {
-    set config [options {
+    set config [::web::core::options {
         db_dialect {} tenant {} aead {} mac {} email_hash_salt {}
         secure_cookies true require_https_origin true allow_oauth_http false allow_loopback_origin false
         show_verification_codes false require_email_delivery true aws_email_enabled true

@@ -1,12 +1,13 @@
 {
   "name": "web-user",
   "license": "MIT",
-  "version": "0.7.4",
+  "version": "1.0.0",
   "scripts": {},
   "dependencies": {
+    "web-core": "^0.1.0",
     "tcl": ">=9.1.0,<10.0.0",
     "tpersist": "^0.1.8",
-    "tpathexp": "^1.1.0",
+    "tpathexp": "^1.2.0",
     "jinja2-tcl": "^0.2.0",
     "tjson": "^1.0.28",
     "tink-tcl": "20240704.0.3",

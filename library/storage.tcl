@@ -4,15 +4,6 @@
 # SPDX-License-Identifier: MIT.
 #
 
-# Merge supported options with their defaults.
-proc ::web::user::options {defaults args} {
-    if {[llength $args] % 2} {error "options must be name/value pairs"}
-    foreach {key value} $args {
-        if {![dict exists $defaults $key]} {error "unknown option: $key"}
-        dict set defaults $key $value
-    }
-    return $defaults
-}
 # The host owns and closes one connection per worker.
 proc ::web::user::connect {config} {
     return [::tpersist::db_connect_config $config]
@@ -28,7 +19,7 @@ proc ::web::user::initdb {connection config} {
 }
 # Validate account policy and borrow the host SQL connection.
 proc ::web::user::create {args} {
-    set config [options {-connection {} -config {}} {*}$args]
+    set config [::web::core::options {-connection {} -config {}} {*}$args]
     set settings [settings [dict get $config -config]]
     if {[dict get $settings registration_captcha] || [dict get $settings login_captcha_after] > 0} {package require tcaptcha 1.0.0}
     foreach key {tenant aead mac} {

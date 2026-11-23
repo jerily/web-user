@@ -12,9 +12,11 @@ proc ::web::user::mount {router args} {
         return -options $opts $message
     }
 }
+
+# Validate the mount settings and prepare the resources used by its handlers.
 proc ::web::user::prepare_configured {config} {
     variable root
-    set settings [options {prefix /user verified_identity_callback {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} email_login_enabled false login_after_email_verification false master_template {} templates {} template_renderer {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {} validate_templates true} {*}[dict get $config -config]]
+    set settings [::web::core::options {prefix /user verified_identity_callback {} email_enabled false email_from {} email_region {} email_queue_enabled false email_queue_url {} email_queue_callback {} email_login_enabled false login_after_email_verification false master_template {} templates {} template_renderer {} title Account issuer {} origin {} properties {} assets_url {} google_enabled false google_client_id {} google_redirect_uri {} validate_templates true} {*}[dict get $config -config]]
     foreach key {email_login_enabled login_after_email_verification} {
         if {![string is boolean -strict [dict get $settings $key]]} {error "$key must be a boolean"}
     }
@@ -49,27 +51,21 @@ proc ::web::user::prepare_configured {config} {
     return [google_configure $config]
 }
 
+# Prepare account resources without changing the router.
 proc ::web::user::prepare_mount {args} {
-    set config [mount_store [options {-store {} -connection {} -policy {} -config {} -secret_config {}} {*}$args]]
+    set config [mount_store [::web::core::options {-store {} -connection {} -policy {} -config {} -secret_config {}} {*}$args]]
     try {prepare_configured $config} on error {message opts} {
         release $config
         return -options $opts $message
     }
 }
 
+# Reserve the account paths, then register the enabled routes and native hooks.
 proc ::web::user::mount_configured {router config} {
-    set prefix [dict get $config -prefix]
-    set settings [dict get $config -config]
-    # Check collisions before installing any route.
-    foreach path [list $prefix $prefix/ $prefix/register $prefix/verify $prefix/resend-verification $prefix/login \
-        $prefix/forgot $prefix/reset $prefix/change-password $prefix/close-account $prefix/two-factor $prefix/two-factor/setup \
-        $prefix/two-factor/disable $prefix/logout $prefix/profile $prefix/admin/users $prefix/_assets/admin.css $prefix/google/link $prefix/google/start $prefix/google/callback $prefix/google/unlink $prefix/email-login $prefix/email-login/verify] {
-        if {[dict get [$router match GET $path] statusCode] != 404} {error "route already mounted: $path"}
-    }
-    foreach route [::web::user::route_specs $prefix $config $settings [dict get $config -store -config]] {
-        lassign $route method path handler
-        $router add $method $path [list ::web::user::request_dispatch $handler] -strict true
-    }
+    set manifest [::web::core::manifest web-user]
+    set plan [::web::core::route_plan $manifest [dict get $config -prefix] $config \
+        [dict get $config -config] [dict get $config -store -config]]
+    ::web::core::install $router $plan ::web::user::request_dispatch
     return $config
 }
 

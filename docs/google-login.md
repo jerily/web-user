@@ -1,6 +1,6 @@
 # Google Login
 
-Google Login is optional in web-user 0.6.0. OAuth2/OIDC is implemented by
+Google Login is optional in web-user 1.0.0. OAuth2/OIDC is implemented by
 `pure-tcl-oauth2-client`, with tjson JSON and Tink JWT verification. Call the usual
 `::web::user::initdb` during maintenance to add the identity and OAuth transaction
 tables before enabling it. Startup and request handlers do not migrate schemas.

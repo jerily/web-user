@@ -1,5 +1,5 @@
 package require tcltest
-package require web-user 0.5.0
+package require web-user 1.0.0
 namespace import ::tcltest::*
 namespace eval ::accesstest {}
 proc ::accesstest::setup {} {

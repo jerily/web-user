@@ -1,0 +1,182 @@
+{
+  "format": "ttrek-web-api/1",
+  "package": "web-user",
+  "summary": "Mount account registration, sign-in, profiles, and user administration on a Tcl web router.",
+  "mount": {
+    "command": "::web::user::mount",
+    "prefix": {"option": "-config", "key": "prefix", "default": "/user", "allowRoot": false},
+    "docs": "MOUNTING.md"
+  },
+  "callbacks": {
+    "settings.template_renderer": {
+      "arguments": ["name", "json"], "returns": "Rendered HTML",
+      "summary": "Render a named template with its JSON context."
+    },
+    "settings.verified_identity_callback": {
+      "arguments": ["request", "userId"], "returns": "Ignored",
+      "summary": "Notify the host when the request establishes a verified account identity."
+    },
+    "settings.email_queue_callback": {
+      "arguments": ["queueUrl"], "returns": "Ignored",
+      "summary": "Notify the host after an account email message is queued."
+    }
+  },
+  "inputs": {
+    "settings.google_enabled": {"type": "boolean", "default": false, "summary": "Enable the Google sign-in and account-linking routes."},
+    "settings.email_login_enabled": {"type": "boolean", "default": false, "summary": "Enable passwordless sign-in with an emailed code."},
+    "policy.collect_names": {"type": "boolean", "default": false, "summary": "Collect first and last names and enable profile editing."},
+    "policy.collect_display_name": {"type": "boolean", "default": false, "summary": "Collect an optional public display name and enable profile editing."},
+    "policy.collect_username": {"type": "boolean", "default": false, "summary": "Require a public username and enable profile editing."}
+  },
+  "router": {"engine": "tpathexp", "strict": true},
+  "routerMiddleware": [],
+  "routes": [
+    {
+      "id": "google.link", "summary": "Show the signed-in account's Google linking form.",
+      "methods": ["GET"], "path": "/google/link",
+      "access": {"signedIn": true},
+      "when": {"anyTrue": ["settings.google_enabled"]},
+      "handler": ["::web::user::google_link", {"bind": "config"}]
+    },
+    {
+      "id": "google.start", "summary": "Start Google sign-in, linking, or reauthentication.",
+      "methods": ["POST"], "path": "/google/start",
+      "when": {"anyTrue": ["settings.google_enabled"]},
+      "handler": ["::web::user::google_start", {"bind": "config"}]
+    },
+    {
+      "id": "google.callback", "summary": "Complete the Google flow for the initiating browser session.",
+      "methods": ["GET"], "path": "/google/callback",
+      "when": {"anyTrue": ["settings.google_enabled"]},
+      "handler": ["::web::user::google_callback", {"bind": "config"}]
+    },
+    {
+      "id": "google.unlink", "summary": "Unlink Google after the signed-in account confirms its password.",
+      "methods": ["POST"], "path": "/google/unlink",
+      "access": {"signedIn": true},
+      "when": {"anyTrue": ["settings.google_enabled"]},
+      "handler": ["::web::user::google_unlink", {"bind": "config"}]
+    },
+    {
+      "id": "email-login", "summary": "Request an email sign-in code for this browser.",
+      "methods": ["GET", "POST"], "path": "/email-login",
+      "when": {"anyTrue": ["settings.email_login_enabled"]},
+      "handler": ["::web::user::email_login", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/email-login"}
+    },
+    {
+      "id": "email-login.verify", "summary": "Verify the email sign-in code for this browser.",
+      "methods": ["GET", "POST"], "path": "/email-login/verify",
+      "when": {"anyTrue": ["settings.email_login_enabled"]},
+      "handler": ["::web::user::email_login_verify", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/email-login~1verify"}
+    },
+    {
+      "id": "account", "summary": "Show the signed-in account overview.",
+      "methods": ["GET"], "path": "",
+      "access": {"signedIn": true},
+      "handler": ["::web::user::account", {"bind": "config"}]
+    },
+    {
+      "id": "account.slash", "summary": "Serve the account overview at the trailing-slash URL.",
+      "methods": ["GET"], "path": "/",
+      "access": {"signedIn": true},
+      "handler": ["::web::user::account", {"bind": "config"}]
+    },
+    {
+      "id": "admin.users", "summary": "List the tenant's registered accounts.",
+      "methods": ["GET"], "path": "/admin/users",
+      "access": {"permission": "users.manage"},
+      "handler": ["::web::user::admin_users", {"bind": "config"}]
+    },
+    {
+      "id": "admin.stylesheet", "summary": "Serve the user directory's stylesheet.",
+      "methods": ["GET"], "path": "/_assets/admin.css",
+      "handler": ["::web::user::admin_stylesheet"]
+    },
+    {
+      "id": "register", "summary": "Register an account with email and password.",
+      "methods": ["GET", "POST"], "path": "/register",
+      "handler": ["::web::user::register", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/register"}
+    },
+    {
+      "id": "verify", "summary": "Confirm account email ownership using a verification code.",
+      "methods": ["GET", "POST"], "path": "/verify",
+      "handler": ["::web::user::verify", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/verify"}
+    },
+    {
+      "id": "resend-verification", "summary": "Request a replacement email verification code.",
+      "methods": ["POST"], "path": "/resend-verification",
+      "handler": ["::web::user::resend_verification", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/resend-verification"}
+    },
+    {
+      "id": "login", "summary": "Sign in with an email address and password.",
+      "methods": ["GET", "POST"], "path": "/login",
+      "handler": ["::web::user::login", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/login"}
+    },
+    {
+      "id": "forgot", "summary": "Request a password recovery code.",
+      "methods": ["GET", "POST"], "path": "/forgot",
+      "handler": ["::web::user::forgot", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/forgot"}
+    },
+    {
+      "id": "reset", "summary": "Reset the password with the browser's recovery code.",
+      "methods": ["GET", "POST"], "path": "/reset",
+      "handler": ["::web::user::reset", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/reset"}
+    },
+    {
+      "id": "change-password", "summary": "Change or set the signed-in account's password.",
+      "methods": ["GET", "POST"], "path": "/change-password",
+      "access": {"signedIn": true},
+      "handler": ["::web::user::change_password", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/change-password"}
+    },
+    {
+      "id": "close-account", "summary": "Confirm and close the signed-in account.",
+      "methods": ["GET", "POST"], "path": "/close-account",
+      "access": {"signedIn": true},
+      "handler": ["::web::user::close_account", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/close-account"}
+    },
+    {
+      "id": "two-factor", "summary": "Complete the pending authenticator challenge.",
+      "methods": ["GET", "POST"], "path": "/two-factor",
+      "handler": ["::web::user::two_factor", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/two-factor"}
+    },
+    {
+      "id": "two-factor.setup", "summary": "Enroll the signed-in account's authenticator.",
+      "methods": ["GET", "POST"], "path": "/two-factor/setup",
+      "access": {"signedIn": true},
+      "handler": ["::web::user::two_factor_setup", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/two-factor~1setup"}
+    },
+    {
+      "id": "two-factor.disable", "summary": "Confirm and disable the signed-in account's authenticator.",
+      "methods": ["GET", "POST"], "path": "/two-factor/disable",
+      "access": {"signedIn": true},
+      "handler": ["::web::user::two_factor_disable", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/two-factor~1disable"}
+    },
+    {
+      "id": "profile", "summary": "View or update the profile fields collected by the tenant.",
+      "methods": ["GET", "POST"], "path": "/profile",
+      "access": {"signedIn": true},
+      "when": {"anyTrue": ["policy.collect_names", "policy.collect_display_name", "policy.collect_username"]},
+      "handler": ["::web::user::profile", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/profile"}
+    },
+    {
+      "id": "logout", "summary": "End the browser's account session.",
+      "methods": ["POST"], "path": "/logout",
+      "handler": ["::web::user::logout", {"bind": "config"}],
+      "operations": {"POST": "schemas/operations.json#/logout"}
+    }
+  ]
+}
