@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(web-user VERSION 1.0.0 LANGUAGES NONE)
+project(web-user VERSION 1.1.0 LANGUAGES NONE)
 set(PACKAGE_DIR "lib/web-user${PROJECT_VERSION}")
 install(FILES pkgIndex.tcl api.json API.md readme.md LICENSE DESTINATION "${PACKAGE_DIR}")
 install(DIRECTORY library sql assets schemas DESTINATION "${PACKAGE_DIR}")
