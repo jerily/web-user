@@ -119,7 +119,8 @@ proc ::web::user::admin_users {config request context params} {
         set current [current_user $config $request $context]
         if {$current eq {}} {return [sign_in_redirect $config $request]}
         set store [dict get $config -store]
-        if {![has_permission $store [dict get $current id] users.manage]} {fail 403 "User management permission is required."}
+        set grants [permissions $store [dict get $current id]]
+        if {"users.manage" ni $grants} {fail 403 "User management permission is required."}
         set query [admin_query $request]
         set sort [dict get $query sort]
         set page [admin_user_rows $store [dict get $query page] $sort]
@@ -132,6 +133,7 @@ proc ::web::user::admin_users {config request context params} {
         if {[dict get $page page] < [dict get $page pages]} {dict set fields next_url [list S $prefix/admin/users?sort=$sort&page=[expr {[dict get $page page] + 1}]]}
         set fields [dict merge [dict get $config -config properties] $fields]
         dict set fields users [list L [admin_user_fields $store [dict get $page items]]]
+        dict set fields permissions [list L [lmap grant $grants {list S $grant}]]
         dict set fields signed_in {BOOL 1}
         dict set fields editing {BOOL 0}
         dict set fields can_manage_users {BOOL 1}

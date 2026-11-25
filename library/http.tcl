@@ -189,7 +189,9 @@ proc ::web::user::render {config view token {extra {}}} {
     dict set context verification_emails_enabled [list BOOL [property $store verification_emails_enabled]]
     dict set context mfa_enabled [list BOOL $enabled]
     dict set context signed_in [list BOOL [expr {$user ne {}}]]
-    dict set context can_manage_users [list BOOL [expr {$user ne {} && [has_permission $store [dict get $user id] users.manage]}]]
+    set grants [permissions $store [dict getdef $user id {}]]
+    dict set context permissions [list L [lmap grant $grants {list S $grant}]]
+    dict set context can_manage_users [list BOOL [expr {"users.manage" in $grants}]]
     dict set context admin_view {BOOL 0}
     dict set context google_enabled [list BOOL [dict get $config -config google_enabled]]
     dict set context email_login_enabled [list BOOL [dict get $config -config email_login_enabled]]
