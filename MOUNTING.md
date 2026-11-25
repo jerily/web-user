@@ -108,6 +108,8 @@ is passed to `current_user`, `authorize`, and `csrf`. It validates settings,
 templates, origin and route collisions before registration. Prefixes must not
 overlap other packages or prior catch-all routes.
 
+Account templates receive `signed_in` and a `permissions` list for the current visitor. Host layouts can use membership tests to show links for granted permissions. Anonymous visitors receive an empty list.
+
 Configuration properties are `master_template` (template source), `templates`
 (named template dictionary), `title`, `issuer`, required `origin`, `prefix`, and typed template
 `properties`. Reserved account fields override host template properties. The master
