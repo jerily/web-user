@@ -1,7 +1,7 @@
 {
   "name": "web-user",
   "license": "MIT",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "scripts": {},
   "dependencies": {
     "web-core": "^0.1.0",
@@ -15,7 +15,7 @@
     "tqrcodegen": "^1.1.1",
     "ksuid-tcl": "^1.0.5",
     "bcrypt-tcl": "2.0.1",
-    "twebserver": "^1.47.56",
+    "twebserver": "^1.47.60",
     "tsession": "^2.0.2",
     "topenapi": "^0.2.0",
     "pure-tcl-aws-ses": "^1.0.0",

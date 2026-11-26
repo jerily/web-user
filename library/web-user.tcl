@@ -20,4 +20,4 @@ namespace eval ::web::user {
     }
     unset name module
 }
-package provide web-user 1.1.1
+package provide web-user 1.1.2
