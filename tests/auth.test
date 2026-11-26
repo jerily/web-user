@@ -12,6 +12,10 @@ namespace import ::tcltest::*
 ::tcltest::testConstraint postgres [info exists ::env(WEB_USER_TEST_PG)]
 namespace eval ::authtest {variable password {a long testing password}; variable serial 0}
 
+test uri-component {return URLs retain their canonical percent escapes} -body {
+    ::web::user::uri_component "a/b c%+&!()*'é\x00%00"
+} -result {a%2Fb%20c%25%2B%26%21%28%29%2A%27%C3%A9%00%2500}
+
 test auth-route-collision {a disabled POST endpoint reserves its path before mounting any account routes} -setup {
     set router [::tpathexp::router]
     $router add POST /team/google/start ::existing -strict true

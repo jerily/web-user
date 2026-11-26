@@ -38,7 +38,7 @@ Set `db_dialect` to `sqlite` or `postgres` in the host configuration. Pass it to
 use that dialect and autocommit mode (`-autobegin 0`). Schema changes never happen in `mount` or request handlers.
 
 Requires Tcl 9.1 or newer. Dependency minimums include tpersist 0.1.8,
-Jinja 0.1.1, tjson 1.0.28, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.56.
+Jinja 0.1.1, tjson 1.0.28, tqrcodegen 1.1.1, ksuid 1.0.5 and twebserver 1.47.60.
 
 Mount configuration accepts `assets_url` to supply the browser-asset base URL,
 for example `https://cdn.example/cdn/user/_assets`.

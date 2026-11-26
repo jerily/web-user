@@ -57,13 +57,6 @@ proc ::web::user::sign_in_redirect {config request} {
 }
 
 proc ::web::user::uri_component {text} {
-    set result {}
-    binary scan [encoding convertto utf-8 $text] cu* bytes
-    foreach byte $bytes {
-        if {($byte >= 65 && $byte <= 90) || ($byte >= 97 && $byte <= 122) ||
-            ($byte >= 48 && $byte <= 57) || $byte in {45 46 95 126}} {
-            append result [format %c $byte]
-        } else {append result [format %%%02X $byte]}
-    }
-    return $result
+    package require twebserver 1.47.60
+    ::twebserver::encode_uri_component $text
 }
