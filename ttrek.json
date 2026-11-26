@@ -1,7 +1,7 @@
 {
   "name": "web-user",
   "license": "MIT",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "scripts": {},
   "dependencies": {
     "web-core": "^0.1.0",

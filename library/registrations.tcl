@@ -103,8 +103,7 @@ proc ::web::user::action_register {config row fields} {
 }
 
 proc ::web::user::verification_signs_in {config} {
-    set settings [dict get $config -config]
-    expr {[dict get $settings email_login_enabled] && [dict get $settings login_after_email_verification]}
+    dict get $config -config login_after_email_verification
 }
 
 # Confirm exactly one registration, or mark an existing active account's email verified.
