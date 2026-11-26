@@ -28,8 +28,8 @@ proc ::authtest::pending {{password {}}} {
     list [browser] [lindex $::authtest::delivered 2]
 }
 
-foreach {emailLogin signIn expected} {true true 1 true false 0 false true 0 false false 0} {
-    test registrations-sign-in-$emailLogin-$signIn {verification can sign in only when both mount options allow it} -setup {
+foreach {emailLogin signIn expected} {true true 1 true false 0 false true 1 false false 0} {
+    test registrations-sign-in-$emailLogin-$signIn {registration verification follows its sign-in option independently of email login} -setup {
         ::authtest::setup LOCAL {bcrypt_cost 4} [dict create email_login_enabled $emailLogin login_after_email_verification $signIn]
     } -body {
         lassign [::authtest::pending] browser code
